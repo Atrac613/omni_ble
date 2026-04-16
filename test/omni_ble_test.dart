@@ -275,6 +275,20 @@ void main() {
     expect(event.value, Uint8List.fromList([9, 8, 7]));
   });
 
+  test('OmniBleEvent parses subscription changes', () {
+    final event = OmniBleEvent.fromMap({
+      'type': 'subscriptionChanged',
+      'deviceId': 'device-3',
+      'serviceUuid': '0000180d-0000-1000-8000-00805f9b34fb',
+      'characteristicUuid': '00002a37-0000-1000-8000-00805f9b34fb',
+      'subscribed': true,
+    });
+
+    expect(event, isA<OmniBleSubscriptionChanged>());
+    expect((event as OmniBleSubscriptionChanged).deviceId, 'device-3');
+    expect(event.subscribed, isTrue);
+  });
+
   test('peripheral.publishGattDatabase forwards services', () async {
     const omniBlePlugin = OmniBle();
     final fakePlatform = MockOmniBlePlatform();

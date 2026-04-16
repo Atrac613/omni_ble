@@ -638,11 +638,20 @@ public class OmniBlePlugin: NSObject, FlutterPlugin, FlutterStreamHandler, CBCen
     central: CBCentral,
     didSubscribeTo characteristic: CBCharacteristic
   ) {
+    let serviceUuid = canonicalUuidString(characteristic.service?.uuid ?? CBUUID(string: "0000"))
+    let characteristicUuid = canonicalUuidString(characteristic.uuid)
     let characteristicKey = serverCharacteristicKey(
-      serviceUuid: canonicalUuidString(characteristic.service?.uuid ?? CBUUID(string: "0000")),
-      characteristicUuid: canonicalUuidString(characteristic.uuid)
+      serviceUuid: serviceUuid,
+      characteristicUuid: characteristicUuid
     )
     subscribedCentrals[characteristicKey, default: [:]][central.identifier] = central
+    eventSink?([
+      "type": "subscriptionChanged",
+      "deviceId": central.identifier.uuidString,
+      "serviceUuid": serviceUuid,
+      "characteristicUuid": characteristicUuid,
+      "subscribed": true,
+    ])
   }
 
   public func peripheralManager(
@@ -650,14 +659,23 @@ public class OmniBlePlugin: NSObject, FlutterPlugin, FlutterStreamHandler, CBCen
     central: CBCentral,
     didUnsubscribeFrom characteristic: CBCharacteristic
   ) {
+    let serviceUuid = canonicalUuidString(characteristic.service?.uuid ?? CBUUID(string: "0000"))
+    let characteristicUuid = canonicalUuidString(characteristic.uuid)
     let characteristicKey = serverCharacteristicKey(
-      serviceUuid: canonicalUuidString(characteristic.service?.uuid ?? CBUUID(string: "0000")),
-      characteristicUuid: canonicalUuidString(characteristic.uuid)
+      serviceUuid: serviceUuid,
+      characteristicUuid: characteristicUuid
     )
     subscribedCentrals[characteristicKey]?[central.identifier] = nil
     if subscribedCentrals[characteristicKey]?.isEmpty == true {
       subscribedCentrals.removeValue(forKey: characteristicKey)
     }
+    eventSink?([
+      "type": "subscriptionChanged",
+      "deviceId": central.identifier.uuidString,
+      "serviceUuid": serviceUuid,
+      "characteristicUuid": characteristicUuid,
+      "subscribed": false,
+    ])
   }
 
   private func capabilitiesPayload() -> [String: Any] {

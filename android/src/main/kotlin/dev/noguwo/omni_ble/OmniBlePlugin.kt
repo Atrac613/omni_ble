@@ -2293,6 +2293,7 @@ class OmniBlePlugin :
       )
     val normalizedDeviceId = normalizeDeviceId(device.address)
     val subscriptionMap = subscribedDevices.getOrPut(characteristicKey) { mutableMapOf() }
+    val wasSubscribed = subscriptionMap.containsKey(normalizedDeviceId)
 
     when {
       value.contentEquals(BluetoothGattDescriptor.DISABLE_NOTIFICATION_VALUE) -> {
@@ -2306,6 +2307,19 @@ class OmniBlePlugin :
 
     if (subscriptionMap.isEmpty()) {
       subscribedDevices.remove(characteristicKey)
+    }
+
+    val isSubscribed = subscriptionMap.containsKey(normalizedDeviceId)
+    if (wasSubscribed != isSubscribed) {
+      emitEvent(
+        mapOf(
+          "type" to "subscriptionChanged",
+          "deviceId" to normalizedDeviceId,
+          "serviceUuid" to normalizeUuidString(characteristic.service.uuid.toString()),
+          "characteristicUuid" to normalizeUuidString(characteristic.uuid.toString()),
+          "subscribed" to isSubscribed,
+        ),
+      )
     }
   }
 

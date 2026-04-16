@@ -489,6 +489,13 @@ sealed class OmniBleEvent {
           characteristicUuid: (map['characteristicUuid'] ?? '').toString(),
           value: _bytesOrNull(map['value']) ?? Uint8List(0),
         );
+      case OmniBleSubscriptionChanged.typeValue:
+        return OmniBleSubscriptionChanged(
+          deviceId: map['deviceId']?.toString(),
+          serviceUuid: (map['serviceUuid'] ?? '').toString(),
+          characteristicUuid: (map['characteristicUuid'] ?? '').toString(),
+          subscribed: map['subscribed'] as bool? ?? false,
+        );
       default:
         return OmniBleUnknownEvent(_objectMap(map));
     }
@@ -567,6 +574,22 @@ final class OmniBleWriteRequestEvent extends OmniBleEvent {
   final String serviceUuid;
   final String characteristicUuid;
   final Uint8List value;
+}
+
+final class OmniBleSubscriptionChanged extends OmniBleEvent {
+  const OmniBleSubscriptionChanged({
+    required this.serviceUuid,
+    required this.characteristicUuid,
+    required this.subscribed,
+    this.deviceId,
+  }) : super(typeValue);
+
+  static const typeValue = 'subscriptionChanged';
+
+  final String? deviceId;
+  final String serviceUuid;
+  final String characteristicUuid;
+  final bool subscribed;
 }
 
 final class OmniBleUnknownEvent extends OmniBleEvent {

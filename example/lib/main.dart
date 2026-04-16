@@ -432,7 +432,7 @@ class _OmniBleHomePageState extends State<OmniBleHomePage> {
                   child: Text(
                     'Permissions: check/request BLE runtime permissions\n'
                     'Central: startScan, connect, readRssi, discoverServices, read/write, setNotification, characteristic events\n'
-                    'Peripheral: publishGattDatabase, startAdvertising, notifyCharacteristicValue, request events, respondToReadRequest/respondToWriteRequest',
+                    'Peripheral: publishGattDatabase, startAdvertising, notifyCharacteristicValue, request/subscription events, respondToReadRequest/respondToWriteRequest',
                   ),
                 ),
               ),
