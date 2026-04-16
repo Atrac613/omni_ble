@@ -50,11 +50,18 @@ abstract class OmniBlePlatform extends PlatformInterface {
 
   Future<Uint8List> readCharacteristic(OmniBleCharacteristicAddress address);
 
+  Future<Uint8List> readDescriptor(OmniBleDescriptorAddress address);
+
   Future<void> writeCharacteristic(
     OmniBleCharacteristicAddress address,
     Uint8List value, {
     OmniBleWriteType type,
   });
+
+  Future<void> writeDescriptor(
+    OmniBleDescriptorAddress address,
+    Uint8List value,
+  );
 
   Future<void> setNotification(
     OmniBleCharacteristicAddress address, {

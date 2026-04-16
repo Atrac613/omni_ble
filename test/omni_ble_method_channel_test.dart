@@ -32,6 +32,8 @@ void main() {
               };
             case 'readCharacteristic':
               return Uint8List.fromList([1, 2, 3]);
+            case 'readDescriptor':
+              return Uint8List.fromList([4, 5]);
             case 'discoverServices':
               return [
                 {
@@ -118,6 +120,26 @@ void main() {
     expect(value, Uint8List.fromList([1, 2, 3]));
   });
 
+  test('readDescriptor decodes bytes', () async {
+    final value = await platform.readDescriptor(
+      const OmniBleDescriptorAddress(
+        deviceId: 'device-1',
+        serviceUuid: '180D',
+        characteristicUuid: '2A37',
+        descriptorUuid: '2902',
+      ),
+    );
+
+    expect(value, Uint8List.fromList([4, 5]));
+    expect(lastCall?.method, 'readDescriptor');
+    expect(lastCall?.arguments, {
+      'deviceId': 'device-1',
+      'serviceUuid': '180D',
+      'characteristicUuid': '2A37',
+      'descriptorUuid': '2902',
+    });
+  });
+
   test('discoverServices decodes GATT payloads', () async {
     final services = await platform.discoverServices('device-1');
 
@@ -154,6 +176,25 @@ void main() {
     expect(lastCall?.arguments['characteristicUuid'], '2A37');
     expect(lastCall?.arguments['writeType'], 'withoutResponse');
     expect(lastCall?.arguments['value'], Uint8List.fromList([4, 5, 6]));
+  });
+
+  test('writeDescriptor encodes write payload', () async {
+    await platform.writeDescriptor(
+      const OmniBleDescriptorAddress(
+        deviceId: 'device-1',
+        serviceUuid: '180D',
+        characteristicUuid: '2A37',
+        descriptorUuid: '2902',
+      ),
+      Uint8List.fromList([1, 0]),
+    );
+
+    expect(lastCall?.method, 'writeDescriptor');
+    expect(lastCall?.arguments['deviceId'], 'device-1');
+    expect(lastCall?.arguments['serviceUuid'], '180D');
+    expect(lastCall?.arguments['characteristicUuid'], '2A37');
+    expect(lastCall?.arguments['descriptorUuid'], '2902');
+    expect(lastCall?.arguments['value'], Uint8List.fromList([1, 0]));
   });
 
   test('publishGattDatabase encodes nested services', () async {

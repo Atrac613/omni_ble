@@ -75,11 +75,22 @@ class MockOmniBlePlatform
   }
 
   @override
+  Future<Uint8List> readDescriptor(OmniBleDescriptorAddress address) async {
+    return Uint8List.fromList([4, 5, 6]);
+  }
+
+  @override
   Future<void> writeCharacteristic(
     OmniBleCharacteristicAddress address,
     Uint8List value, {
     OmniBleWriteType type = OmniBleWriteType.withResponse,
   }) async {}
+
+  @override
+  Future<void> writeDescriptor(
+    OmniBleDescriptorAddress address,
+    Uint8List value,
+  ) async {}
 
   @override
   Future<void> setNotification(
@@ -172,6 +183,23 @@ void main() {
 
     expect(fakePlatform.lastScanConfig?.serviceUuids, ['180D']);
     expect(fakePlatform.lastScanConfig?.allowDuplicates, isTrue);
+  });
+
+  test('central.readDescriptor forwards descriptor address', () async {
+    const omniBlePlugin = OmniBle();
+    final fakePlatform = MockOmniBlePlatform();
+    OmniBlePlatform.instance = fakePlatform;
+
+    final value = await omniBlePlugin.central.readDescriptor(
+      const OmniBleDescriptorAddress(
+        deviceId: 'device-1',
+        serviceUuid: '180D',
+        characteristicUuid: '2A37',
+        descriptorUuid: '2902',
+      ),
+    );
+
+    expect(value, Uint8List.fromList([4, 5, 6]));
   });
 
   test('OmniBleEvent parses connection state changes', () {

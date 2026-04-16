@@ -67,12 +67,23 @@ class OmniBleCentral {
     return _platform.readCharacteristic(address);
   }
 
+  Future<Uint8List> readDescriptor(OmniBleDescriptorAddress address) {
+    return _platform.readDescriptor(address);
+  }
+
   Future<void> writeCharacteristic(
     OmniBleCharacteristicAddress address,
     Uint8List value, {
     OmniBleWriteType type = OmniBleWriteType.withResponse,
   }) {
     return _platform.writeCharacteristic(address, value, type: type);
+  }
+
+  Future<void> writeDescriptor(
+    OmniBleDescriptorAddress address,
+    Uint8List value,
+  ) {
+    return _platform.writeDescriptor(address, value);
   }
 
   Future<void> setNotification(

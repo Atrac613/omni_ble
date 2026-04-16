@@ -265,6 +265,29 @@ class OmniBleCharacteristicAddress {
   }
 }
 
+class OmniBleDescriptorAddress {
+  const OmniBleDescriptorAddress({
+    required this.deviceId,
+    required this.serviceUuid,
+    required this.characteristicUuid,
+    required this.descriptorUuid,
+  });
+
+  final String deviceId;
+  final String serviceUuid;
+  final String characteristicUuid;
+  final String descriptorUuid;
+
+  Map<String, Object?> toMap() {
+    return {
+      'deviceId': deviceId,
+      'serviceUuid': serviceUuid,
+      'characteristicUuid': characteristicUuid,
+      'descriptorUuid': descriptorUuid,
+    };
+  }
+}
+
 class OmniBleGattDatabase {
   const OmniBleGattDatabase({required this.services});
 

@@ -28,6 +28,8 @@ public class OmniBlePlugin: NSObject, FlutterPlugin, FlutterStreamHandler, CBCen
     "central", "scanning", "gattClient", "peripheral", "advertising", "gattServer",
     "notifications",
   ]
+  private let clientCharacteristicConfigurationUuid =
+    "00002902-0000-1000-8000-00805f9b34fb"
   private var centralManager: CBCentralManager?
   private var peripheralManager: CBPeripheralManager?
   private var eventSink: FlutterEventSink?
@@ -86,8 +88,12 @@ public class OmniBlePlugin: NSObject, FlutterPlugin, FlutterStreamHandler, CBCen
       discoverServices(arguments: call.arguments, result: result)
     case "readCharacteristic":
       readCharacteristic(arguments: call.arguments, result: result)
+    case "readDescriptor":
+      readDescriptor(arguments: call.arguments, result: result)
     case "writeCharacteristic":
       writeCharacteristic(arguments: call.arguments, result: result)
+    case "writeDescriptor":
+      writeDescriptor(arguments: call.arguments, result: result)
     case "setNotification":
       setNotification(arguments: call.arguments, result: result)
     case "publishGattDatabase":
@@ -366,6 +372,44 @@ public class OmniBlePlugin: NSObject, FlutterPlugin, FlutterStreamHandler, CBCen
 
   public func peripheral(
     _ peripheral: CBPeripheral,
+    didUpdateValueFor descriptor: CBDescriptor,
+    error: Error?
+  ) {
+    let address = descriptorAddress(for: peripheral, descriptor: descriptor)
+
+    guard let pendingResult = pendingReadResults.removeValue(forKey: address.operationKey) else {
+      return
+    }
+
+    if let error {
+      pendingResult(
+        FlutterError(
+          code: "read-failed",
+          message: error.localizedDescription,
+          details: nil
+        )
+      )
+      return
+    }
+
+    guard let value = descriptorData(from: descriptor.value) else {
+      pendingResult(
+        FlutterError(
+          code: "invalid-response",
+          message: "Bluetooth descriptor value could not be converted to bytes.",
+          details: [
+            "descriptorUuid": address.descriptorUuid
+          ]
+        )
+      )
+      return
+    }
+
+    pendingResult(FlutterStandardTypedData(bytes: value))
+  }
+
+  public func peripheral(
+    _ peripheral: CBPeripheral,
     didWriteValueFor characteristic: CBCharacteristic,
     error: Error?
   ) {
@@ -377,6 +421,31 @@ public class OmniBlePlugin: NSObject, FlutterPlugin, FlutterStreamHandler, CBCen
     )
 
     guard let pendingResult = pendingWriteResults.removeValue(forKey: operationKey) else {
+      return
+    }
+
+    if let error {
+      pendingResult(
+        FlutterError(
+          code: "write-failed",
+          message: error.localizedDescription,
+          details: nil
+        )
+      )
+      return
+    }
+
+    pendingResult(nil)
+  }
+
+  public func peripheral(
+    _ peripheral: CBPeripheral,
+    didWriteValueFor descriptor: CBDescriptor,
+    error: Error?
+  ) {
+    let address = descriptorAddress(for: peripheral, descriptor: descriptor)
+
+    guard let pendingResult = pendingWriteResults.removeValue(forKey: address.operationKey) else {
       return
     }
 
@@ -869,6 +938,58 @@ public class OmniBlePlugin: NSObject, FlutterPlugin, FlutterStreamHandler, CBCen
     peripheral.readValue(for: characteristic)
   }
 
+  private func readDescriptor(arguments: Any?, result: @escaping FlutterResult) {
+    guard let address = parseDescriptorAddress(arguments: arguments) else {
+      result(
+        FlutterError(
+          code: "invalid-argument",
+          message:
+            "`deviceId`, `serviceUuid`, `characteristicUuid`, and `descriptorUuid` are required to read a descriptor.",
+          details: nil
+        )
+      )
+      return
+    }
+
+    guard let peripheral = connectedPeripheral(identifier: address.identifier) else {
+      result(
+        FlutterError(
+          code: "not-connected",
+          message: "Bluetooth device must be connected before reading a descriptor.",
+          details: nil
+        )
+      )
+      return
+    }
+
+    guard let descriptor = resolveDescriptor(on: peripheral, address: address) else {
+      result(
+        FlutterError(
+          code: "unavailable",
+          message:
+            "Bluetooth descriptor was not found. Call discoverServices() before reading.",
+          details: nil
+        )
+      )
+      return
+    }
+
+    let operationKey = address.operationKey
+    guard pendingReadResults[operationKey] == nil else {
+      result(
+        FlutterError(
+          code: "busy",
+          message: "Bluetooth read is already in progress for this descriptor.",
+          details: nil
+        )
+      )
+      return
+    }
+
+    pendingReadResults[operationKey] = result
+    peripheral.readValue(for: descriptor)
+  }
+
   private func writeCharacteristic(arguments: Any?, result: @escaping FlutterResult) {
     guard
       let payload = arguments as? [String: Any],
@@ -933,6 +1054,73 @@ public class OmniBlePlugin: NSObject, FlutterPlugin, FlutterStreamHandler, CBCen
     if writeType == .withoutResponse {
       result(nil)
     }
+  }
+
+  private func writeDescriptor(arguments: Any?, result: @escaping FlutterResult) {
+    guard
+      let payload = arguments as? [String: Any],
+      let address = parseDescriptorAddress(arguments: payload)
+    else {
+      result(
+        FlutterError(
+          code: "invalid-argument",
+          message:
+            "`deviceId`, `serviceUuid`, `characteristicUuid`, `descriptorUuid`, and `value` are required to write a descriptor.",
+          details: nil
+        )
+      )
+      return
+    }
+
+    guard let peripheral = connectedPeripheral(identifier: address.identifier) else {
+      result(
+        FlutterError(
+          code: "not-connected",
+          message: "Bluetooth device must be connected before writing a descriptor.",
+          details: nil
+        )
+      )
+      return
+    }
+
+    if address.descriptorUuid == clientCharacteristicConfigurationUuid {
+      result(
+        FlutterError(
+          code: "unsupported",
+          message:
+            "Use setNotification() to update the client characteristic configuration descriptor.",
+          details: nil
+        )
+      )
+      return
+    }
+
+    guard let descriptor = resolveDescriptor(on: peripheral, address: address) else {
+      result(
+        FlutterError(
+          code: "unavailable",
+          message:
+            "Bluetooth descriptor was not found. Call discoverServices() before writing.",
+          details: nil
+        )
+      )
+      return
+    }
+
+    let operationKey = address.operationKey
+    guard pendingWriteResults[operationKey] == nil else {
+      result(
+        FlutterError(
+          code: "busy",
+          message: "Bluetooth write is already in progress for this descriptor.",
+          details: nil
+        )
+      )
+      return
+    }
+
+    pendingWriteResults[operationKey] = result
+    peripheral.writeValue(data(from: payload["value"]), for: descriptor)
   }
 
   private func setNotification(arguments: Any?, result: @escaping FlutterResult) {
@@ -1423,6 +1611,26 @@ public class OmniBlePlugin: NSObject, FlutterPlugin, FlutterStreamHandler, CBCen
     )
   }
 
+  private func parseDescriptorAddress(arguments: Any?) -> ParsedDescriptorAddress? {
+    guard
+      let payload = arguments as? [String: Any],
+      let deviceId = payload["deviceId"] as? String,
+      let identifier = UUID(uuidString: deviceId),
+      let serviceUuid = payload["serviceUuid"] as? String,
+      let characteristicUuid = payload["characteristicUuid"] as? String,
+      let descriptorUuid = payload["descriptorUuid"] as? String
+    else {
+      return nil
+    }
+
+    return ParsedDescriptorAddress(
+      identifier: identifier,
+      serviceUuid: normalizedUuidKey(serviceUuid),
+      characteristicUuid: normalizedUuidKey(characteristicUuid),
+      descriptorUuid: normalizedUuidKey(descriptorUuid)
+    )
+  }
+
   private func resolveCharacteristic(
     on peripheral: CBPeripheral,
     address: ParsedCharacteristicAddress
@@ -1455,6 +1663,28 @@ public class OmniBlePlugin: NSObject, FlutterPlugin, FlutterStreamHandler, CBCen
     }
 
     return nil
+  }
+
+  private func resolveDescriptor(
+    on peripheral: CBPeripheral,
+    address: ParsedDescriptorAddress
+  ) -> CBDescriptor? {
+    guard
+      let characteristic = resolveCharacteristic(
+        on: peripheral,
+        address: ParsedCharacteristicAddress(
+          identifier: address.identifier,
+          serviceUuid: address.serviceUuid,
+          characteristicUuid: address.characteristicUuid
+        )
+      )
+    else {
+      return nil
+    }
+
+    return (characteristic.descriptors ?? []).first { descriptor in
+      canonicalUuidString(descriptor.uuid) == address.descriptorUuid
+    }
   }
 
   private func cacheCharacteristics(for peripheral: CBPeripheral, service: CBService) {
@@ -1823,15 +2053,8 @@ public class OmniBlePlugin: NSObject, FlutterPlugin, FlutterStreamHandler, CBCen
     return [
       "uuid": canonicalUuidString(descriptor.uuid),
       "permissions": [String](),
-      "initialValue": descriptorValuePayload(descriptor.value) as Any,
+      "initialValue": descriptorData(from: descriptor.value).map(Array.init) as Any,
     ]
-  }
-
-  private func descriptorValuePayload(_ value: Any?) -> [UInt8]? {
-    guard let data = value as? Data else {
-      return nil
-    }
-    return Array(data)
   }
 
   private func characteristicAddress(
@@ -1841,6 +2064,19 @@ public class OmniBlePlugin: NSObject, FlutterPlugin, FlutterStreamHandler, CBCen
     return (
       serviceUuid: canonicalUuidString(characteristic.service?.uuid ?? CBUUID(string: "0000")),
       characteristicUuid: canonicalUuidString(characteristic.uuid)
+    )
+  }
+
+  private func descriptorAddress(
+    for peripheral: CBPeripheral,
+    descriptor: CBDescriptor
+  ) -> ParsedDescriptorAddress {
+    let characteristic = descriptor.characteristic
+    return ParsedDescriptorAddress(
+      identifier: peripheral.identifier,
+      serviceUuid: canonicalUuidString(characteristic?.service?.uuid ?? CBUUID(string: "0000")),
+      characteristicUuid: canonicalUuidString(characteristic?.uuid ?? CBUUID(string: "0000")),
+      descriptorUuid: canonicalUuidString(descriptor.uuid)
     )
   }
 
@@ -1877,6 +2113,16 @@ public class OmniBlePlugin: NSObject, FlutterPlugin, FlutterStreamHandler, CBCen
   ) -> String {
     return
       "\(deviceIdentifier.uuidString.lowercased())|\(serviceUuid.lowercased())|\(characteristicUuid.lowercased())"
+  }
+
+  private func descriptorOperationKey(
+    deviceIdentifier: UUID,
+    serviceUuid: String,
+    characteristicUuid: String,
+    descriptorUuid: String
+  ) -> String {
+    return
+      "\(deviceIdentifier.uuidString.lowercased())|\(serviceUuid.lowercased())|\(characteristicUuid.lowercased())|\(descriptorUuid.lowercased())"
   }
 
   private func normalizedUuidKey(_ value: String) -> String {
@@ -1922,6 +2168,35 @@ public class OmniBlePlugin: NSObject, FlutterPlugin, FlutterStreamHandler, CBCen
     }
     return Data()
   }
+
+  private func descriptorData(from value: Any?) -> Data? {
+    if let typedData = value as? FlutterStandardTypedData {
+      return typedData.data
+    }
+    if let data = value as? Data {
+      return data
+    }
+    if let values = value as? [NSNumber] {
+      return Data(values.map(\.uint8Value))
+    }
+    if let values = value as? [UInt8] {
+      return Data(values)
+    }
+    if let values = value as? [Int] {
+      return Data(values.map(UInt8.init))
+    }
+    if let string = value as? String {
+      return string.data(using: .utf8)
+    }
+    if let string = value as? NSString {
+      return String(string).data(using: .utf8)
+    }
+    if let number = value as? NSNumber {
+      var littleEndianValue = number.uint16Value.littleEndian
+      return withUnsafeBytes(of: &littleEndianValue) { Data($0) }
+    }
+    return nil
+  }
 }
 
 private struct ParsedCharacteristicAddress {
@@ -1932,5 +2207,17 @@ private struct ParsedCharacteristicAddress {
   var operationKey: String {
     return
       "\(identifier.uuidString.lowercased())|\(serviceUuid.lowercased())|\(characteristicUuid.lowercased())"
+  }
+}
+
+private struct ParsedDescriptorAddress {
+  let identifier: UUID
+  let serviceUuid: String
+  let characteristicUuid: String
+  let descriptorUuid: String
+
+  var operationKey: String {
+    return
+      "\(identifier.uuidString.lowercased())|\(serviceUuid.lowercased())|\(characteristicUuid.lowercased())|\(descriptorUuid.lowercased())"
   }
 }

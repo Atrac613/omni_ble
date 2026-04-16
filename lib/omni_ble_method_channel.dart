@@ -100,6 +100,12 @@ class MethodChannelOmniBle extends OmniBlePlatform {
   }
 
   @override
+  Future<Uint8List> readDescriptor(OmniBleDescriptorAddress address) async {
+    final response = await _invokeList('readDescriptor', address.toMap());
+    return _bytesFromDynamic(response);
+  }
+
+  @override
   Future<void> writeCharacteristic(
     OmniBleCharacteristicAddress address,
     Uint8List value, {
@@ -110,6 +116,14 @@ class MethodChannelOmniBle extends OmniBlePlatform {
       'value': value,
       'writeType': type.value,
     });
+  }
+
+  @override
+  Future<void> writeDescriptor(
+    OmniBleDescriptorAddress address,
+    Uint8List value,
+  ) {
+    return _invokeVoid('writeDescriptor', {...address.toMap(), 'value': value});
   }
 
   @override

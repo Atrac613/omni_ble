@@ -8,7 +8,7 @@ The current state is an early but usable cross-platform BLE foundation:
 
 - Dart-side public API is defined for both central and peripheral workflows.
 - Platform channels are wired on every target.
-- iOS and macOS now implement adapter-state events, central scanning, connection state events, service discovery, characteristic read/write, notification subscriptions, and a first peripheral backend.
+- iOS and macOS now implement adapter-state events, central scanning, connection state events, service discovery, characteristic/descriptor read-write, notification subscriptions, and a first peripheral backend.
 - Android now implements the same central-side surface plus a first peripheral backend, and the Dart API can now check/request the runtime Bluetooth permissions those flows need.
 - Windows and Linux still expose the BLE transport as scaffolding only, with the permission API returning `notRequired`.
 
@@ -80,9 +80,9 @@ Future<void> peripheralFlow() async {
 
 ## Current coverage
 
-- `iOS`: `getCapabilities()`, adapter state events, `startScan()`, `stopScan()`, scan result events, `connect()`, `disconnect()`, connection state events, `discoverServices()`, `readCharacteristic()`, `writeCharacteristic()`, `setNotification()`, characteristic value change events, `publishGattDatabase()`, `clearGattDatabase()`, `startAdvertising()`, `stopAdvertising()`, `notifyCharacteristicValue()`, `readRequest`/`writeRequest` events, `respondToReadRequest()`, `respondToWriteRequest()`, `checkPermissions()`, `requestPermissions()` (`notRequired`)
-- `macOS`: `getCapabilities()`, adapter state events, `startScan()`, `stopScan()`, scan result events, `connect()`, `disconnect()`, connection state events, `discoverServices()`, `readCharacteristic()`, `writeCharacteristic()`, `setNotification()`, characteristic value change events, `publishGattDatabase()`, `clearGattDatabase()`, `startAdvertising()`, `stopAdvertising()`, `notifyCharacteristicValue()`, `readRequest`/`writeRequest` events, `respondToReadRequest()`, `respondToWriteRequest()`, `checkPermissions()`, `requestPermissions()` (`notRequired`)
-- `Android`: `getCapabilities()`, adapter state events, `startScan()`, `stopScan()`, scan result events, `connect()`, `disconnect()`, connection state events, `discoverServices()`, `readCharacteristic()`, `writeCharacteristic()`, `setNotification()`, characteristic value change events, `publishGattDatabase()`, `clearGattDatabase()`, `startAdvertising()`, `stopAdvertising()`, `notifyCharacteristicValue()`, `readRequest`/`writeRequest` events, `respondToReadRequest()`, `respondToWriteRequest()`, `checkPermissions()`, `requestPermissions()`
+- `iOS`: `getCapabilities()`, adapter state events, `startScan()`, `stopScan()`, scan result events, `connect()`, `disconnect()`, connection state events, `discoverServices()`, `readCharacteristic()`, `readDescriptor()`, `writeCharacteristic()`, `writeDescriptor()`, `setNotification()`, characteristic value change events, `publishGattDatabase()`, `clearGattDatabase()`, `startAdvertising()`, `stopAdvertising()`, `notifyCharacteristicValue()`, `readRequest`/`writeRequest` events, `respondToReadRequest()`, `respondToWriteRequest()`, `checkPermissions()`, `requestPermissions()` (`notRequired`)
+- `macOS`: `getCapabilities()`, adapter state events, `startScan()`, `stopScan()`, scan result events, `connect()`, `disconnect()`, connection state events, `discoverServices()`, `readCharacteristic()`, `readDescriptor()`, `writeCharacteristic()`, `writeDescriptor()`, `setNotification()`, characteristic value change events, `publishGattDatabase()`, `clearGattDatabase()`, `startAdvertising()`, `stopAdvertising()`, `notifyCharacteristicValue()`, `readRequest`/`writeRequest` events, `respondToReadRequest()`, `respondToWriteRequest()`, `checkPermissions()`, `requestPermissions()` (`notRequired`)
+- `Android`: `getCapabilities()`, adapter state events, `startScan()`, `stopScan()`, scan result events, `connect()`, `disconnect()`, connection state events, `discoverServices()`, `readCharacteristic()`, `readDescriptor()`, `writeCharacteristic()`, `writeDescriptor()`, `setNotification()`, characteristic value change events, `publishGattDatabase()`, `clearGattDatabase()`, `startAdvertising()`, `stopAdvertising()`, `notifyCharacteristicValue()`, `readRequest`/`writeRequest` events, `respondToReadRequest()`, `respondToWriteRequest()`, `checkPermissions()`, `requestPermissions()`
 - `Windows`: scaffold plus `checkPermissions()`/`requestPermissions()` (`notRequired`)
 - `Linux`: scaffold plus `checkPermissions()`/`requestPermissions()` (`notRequired`)
 
@@ -97,7 +97,7 @@ Future<void> peripheralFlow() async {
 
 ## Recommended next steps
 
-1. Harden the peripheral implementation with richer advertising options, descriptor handling, and subscription/backpressure ergonomics.
-2. Harden the central implementation with descriptor discovery, MTU/PHY options, and more integration coverage.
+1. Harden the peripheral implementation with richer advertising options and subscription/backpressure ergonomics.
+2. Harden the central implementation with MTU/PHY options, richer connection tuning, and more integration coverage.
 3. Bring Windows and Linux onto either native stacks or a well-scoped abstraction layer.
 4. Add higher-level convenience helpers for permission rationale / settings recovery on Android.

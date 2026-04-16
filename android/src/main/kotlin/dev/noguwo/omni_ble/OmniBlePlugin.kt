@@ -78,6 +78,19 @@ class OmniBlePlugin :
       get() = "$serviceUuid|$characteristicUuid"
   }
 
+  private data class ParsedDescriptorAddress(
+    val deviceId: String,
+    val serviceUuid: String,
+    val characteristicUuid: String,
+    val descriptorUuid: String,
+  ) {
+    val characteristicKey: String
+      get() = "$serviceUuid|$characteristicUuid"
+
+    val descriptorKey: String
+      get() = "$serviceUuid|$characteristicUuid|$descriptorUuid"
+  }
+
   private data class PendingServerReadRequest(
     val device: BluetoothDevice,
     val requestId: Int,
@@ -102,7 +115,9 @@ class OmniBlePlugin :
   private companion object {
     const val OP_DISCOVER_SERVICES = "discoverServices"
     const val OP_READ_CHARACTERISTIC = "readCharacteristic"
+    const val OP_READ_DESCRIPTOR = "readDescriptor"
     const val OP_WRITE_CHARACTERISTIC = "writeCharacteristic"
+    const val OP_WRITE_DESCRIPTOR = "writeDescriptor"
     const val OP_SET_NOTIFICATION = "setNotification"
     const val REQUEST_CODE_PERMISSIONS = 0x0B1E
     val CLIENT_CHARACTERISTIC_CONFIGURATION_UUID: UUID =
@@ -280,6 +295,24 @@ class OmniBlePlugin :
         replySuccess(operation.result, null)
       }
 
+      @Suppress("DEPRECATION")
+      override fun onDescriptorRead(
+        gatt: BluetoothGatt,
+        descriptor: BluetoothGattDescriptor,
+        status: Int,
+      ) {
+        handleDescriptorRead(gatt, descriptor, descriptor.value, status)
+      }
+
+      override fun onDescriptorRead(
+        gatt: BluetoothGatt,
+        descriptor: BluetoothGattDescriptor,
+        status: Int,
+        value: ByteArray,
+      ) {
+        handleDescriptorRead(gatt, descriptor, value, status)
+      }
+
       override fun onDescriptorWrite(
         gatt: BluetoothGatt,
         descriptor: BluetoothGattDescriptor,
@@ -293,8 +326,30 @@ class OmniBlePlugin :
             normalizeUuidString(descriptor.characteristic.service.uuid.toString()),
             normalizeUuidString(descriptor.characteristic.uuid.toString()),
           )
+        val descriptorKey =
+          descriptorKey(
+            normalizeUuidString(descriptor.characteristic.service.uuid.toString()),
+            normalizeUuidString(descriptor.characteristic.uuid.toString()),
+            normalizeUuidString(descriptor.uuid.toString()),
+          )
 
-        if (operation?.type != OP_SET_NOTIFICATION || operation.key != characteristicKey) {
+        if (operation?.type == OP_SET_NOTIFICATION && operation.key == characteristicKey) {
+          connection.activeOperation = null
+          if (status != BluetoothGatt.GATT_SUCCESS) {
+            replyError(
+              operation.result,
+              "set-notification-failed",
+              "Bluetooth notification update failed with status $status.",
+              mapOf("status" to status),
+            )
+            return
+          }
+
+          replySuccess(operation.result, null)
+          return
+        }
+
+        if (operation?.type != OP_WRITE_DESCRIPTOR || operation.key != descriptorKey) {
           return
         }
 
@@ -302,8 +357,8 @@ class OmniBlePlugin :
         if (status != BluetoothGatt.GATT_SUCCESS) {
           replyError(
             operation.result,
-            "set-notification-failed",
-            "Bluetooth notification update failed with status $status.",
+            "write-failed",
+            "Bluetooth descriptor write failed with status $status.",
             mapOf("status" to status),
           )
           return
@@ -539,7 +594,9 @@ class OmniBlePlugin :
       "disconnect" -> disconnect(call, result)
       "discoverServices" -> discoverServices(call, result)
       "readCharacteristic" -> readCharacteristic(call, result)
+      "readDescriptor" -> readDescriptor(call, result)
       "writeCharacteristic" -> writeCharacteristic(call, result)
+      "writeDescriptor" -> writeDescriptor(call, result)
       "setNotification" -> setNotification(call, result)
       "publishGattDatabase" -> publishGattDatabase(call, result)
       "clearGattDatabase" -> {
@@ -1116,6 +1173,87 @@ class OmniBlePlugin :
   }
 
   @SuppressLint("MissingPermission")
+  private fun readDescriptor(call: MethodCall, result: MethodChannel.Result) {
+    val context = applicationContext
+    if (context == null) {
+      result.error("unavailable", "Android context is not attached.", null)
+      return
+    }
+
+    val missingPermissions = missingConnectionPermissions(context)
+    if (missingPermissions.isNotEmpty()) {
+      result.error(
+        "permission-denied",
+        "Bluetooth connect permission is missing on Android.",
+        missingPermissions,
+      )
+      return
+    }
+
+    val address = parseDescriptorAddress(call.arguments)
+    if (address == null) {
+      result.error(
+        "invalid-argument",
+        "`deviceId`, `serviceUuid`, `characteristicUuid`, and `descriptorUuid` are required to read a descriptor.",
+        null,
+      )
+      return
+    }
+
+    val connection = connectedConnection(address.deviceId)
+    if (connection == null) {
+      result.error(
+        "not-connected",
+        "Bluetooth device must be connected before reading a descriptor.",
+        null,
+      )
+      return
+    }
+
+    if (connection.activeOperation != null) {
+      result.error("busy", "Another Bluetooth GATT operation is already in progress.", null)
+      return
+    }
+
+    val descriptor = findDescriptor(connection, address)
+    if (descriptor == null) {
+      result.error(
+        "unavailable",
+        "Bluetooth descriptor was not found. Call discoverServices() before reading.",
+        null,
+      )
+      return
+    }
+
+    val gatt = connection.gatt
+    if (gatt == null) {
+      result.error("not-connected", "Bluetooth GATT is not available.", null)
+      return
+    }
+
+    connection.activeOperation =
+      PendingOperation(
+        type = OP_READ_DESCRIPTOR,
+        key = address.descriptorKey,
+        result = result,
+      )
+
+    try {
+      if (!gatt.readDescriptor(descriptor)) {
+        connection.activeOperation = null
+        result.error("read-failed", "Bluetooth descriptor read could not start.", null)
+      }
+    } catch (error: SecurityException) {
+      connection.activeOperation = null
+      result.error(
+        "permission-denied",
+        error.message ?: "Bluetooth connect permission is missing on Android.",
+        missingPermissions,
+      )
+    }
+  }
+
+  @SuppressLint("MissingPermission")
   private fun writeCharacteristic(call: MethodCall, result: MethodChannel.Result) {
     val context = applicationContext
     if (context == null) {
@@ -1202,6 +1340,99 @@ class OmniBlePlugin :
 
       if (writeType != BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT) {
         replySuccess(result, null)
+      }
+    } catch (error: SecurityException) {
+      connection.activeOperation = null
+      result.error(
+        "permission-denied",
+        error.message ?: "Bluetooth connect permission is missing on Android.",
+        missingPermissions,
+      )
+    }
+  }
+
+  @SuppressLint("MissingPermission")
+  private fun writeDescriptor(call: MethodCall, result: MethodChannel.Result) {
+    val context = applicationContext
+    if (context == null) {
+      result.error("unavailable", "Android context is not attached.", null)
+      return
+    }
+
+    val missingPermissions = missingConnectionPermissions(context)
+    if (missingPermissions.isNotEmpty()) {
+      result.error(
+        "permission-denied",
+        "Bluetooth connect permission is missing on Android.",
+        missingPermissions,
+      )
+      return
+    }
+
+    val address = parseDescriptorAddress(call.arguments)
+    if (address == null) {
+      result.error(
+        "invalid-argument",
+        "`deviceId`, `serviceUuid`, `characteristicUuid`, `descriptorUuid`, and `value` are required to write a descriptor.",
+        null,
+      )
+      return
+    }
+
+    if (address.descriptorUuid == CLIENT_CHARACTERISTIC_CONFIGURATION_UUID.toString()) {
+      result.error(
+        "unsupported",
+        "Use setNotification() to update the client characteristic configuration descriptor.",
+        null,
+      )
+      return
+    }
+
+    val connection = connectedConnection(address.deviceId)
+    if (connection == null) {
+      result.error(
+        "not-connected",
+        "Bluetooth device must be connected before writing a descriptor.",
+        null,
+      )
+      return
+    }
+
+    if (connection.activeOperation != null) {
+      result.error("busy", "Another Bluetooth GATT operation is already in progress.", null)
+      return
+    }
+
+    val descriptor = findDescriptor(connection, address)
+    if (descriptor == null) {
+      result.error(
+        "unavailable",
+        "Bluetooth descriptor was not found. Call discoverServices() before writing.",
+        null,
+      )
+      return
+    }
+
+    val gatt = connection.gatt
+    if (gatt == null) {
+      result.error("not-connected", "Bluetooth GATT is not available.", null)
+      return
+    }
+
+    val payload = call.arguments as? Map<*, *>
+    val value = payload?.get("value").toByteArray()
+    connection.activeOperation =
+      PendingOperation(
+        type = OP_WRITE_DESCRIPTOR,
+        key = address.descriptorKey,
+        result = result,
+      )
+
+    try {
+      val started = writeDescriptor(gatt, descriptor, value)
+      if (!started) {
+        connection.activeOperation = null
+        result.error("write-failed", "Bluetooth descriptor write could not start.", null)
       }
     } catch (error: SecurityException) {
       connection.activeOperation = null
@@ -2242,6 +2473,23 @@ class OmniBlePlugin :
     )
   }
 
+  private fun parseDescriptorAddress(arguments: Any?): ParsedDescriptorAddress? {
+    val payload = arguments as? Map<*, *> ?: return null
+    val deviceId = (payload["deviceId"] as? String)?.let(::normalizeDeviceId) ?: return null
+    val serviceUuid = (payload["serviceUuid"] as? String)?.let(::safeNormalizeUuidString) ?: return null
+    val characteristicUuid =
+      (payload["characteristicUuid"] as? String)?.let(::safeNormalizeUuidString) ?: return null
+    val descriptorUuid =
+      (payload["descriptorUuid"] as? String)?.let(::safeNormalizeUuidString) ?: return null
+
+    return ParsedDescriptorAddress(
+      deviceId = deviceId,
+      serviceUuid = serviceUuid,
+      characteristicUuid = characteristicUuid,
+      descriptorUuid = descriptorUuid,
+    )
+  }
+
   private fun connectedConnection(deviceId: String): ConnectionContext? {
     val connection = connections[deviceId] ?: return null
     return if (connection.state == "connected" && connection.gatt != null) connection else null
@@ -2286,6 +2534,25 @@ class OmniBlePlugin :
     return null
   }
 
+  private fun findDescriptor(
+    connection: ConnectionContext,
+    address: ParsedDescriptorAddress,
+  ): BluetoothGattDescriptor? {
+    val characteristic =
+      findCharacteristic(
+        connection,
+        ParsedCharacteristicAddress(
+          deviceId = address.deviceId,
+          serviceUuid = address.serviceUuid,
+          characteristicUuid = address.characteristicUuid,
+        ),
+      ) ?: return null
+
+    return characteristic.descriptors.firstOrNull { descriptor ->
+      normalizeUuidString(descriptor.uuid.toString()) == address.descriptorUuid
+    }
+  }
+
   @Suppress("DEPRECATION")
   private fun handleCharacteristicRead(
     gatt: BluetoothGatt,
@@ -2312,6 +2579,41 @@ class OmniBlePlugin :
         operation.result,
         "read-failed",
         "Bluetooth characteristic read failed with status $status.",
+        mapOf("status" to status),
+      )
+      return
+    }
+
+    replySuccess(operation.result, value ?: ByteArray(0))
+  }
+
+  @Suppress("DEPRECATION")
+  private fun handleDescriptorRead(
+    gatt: BluetoothGatt,
+    descriptor: BluetoothGattDescriptor,
+    value: ByteArray?,
+    status: Int,
+  ) {
+    val deviceId = normalizeDeviceId(gatt.device.address)
+    val connection = connections[deviceId] ?: return
+    val operation = connection.activeOperation
+    val descriptorKey =
+      descriptorKey(
+        normalizeUuidString(descriptor.characteristic.service.uuid.toString()),
+        normalizeUuidString(descriptor.characteristic.uuid.toString()),
+        normalizeUuidString(descriptor.uuid.toString()),
+      )
+
+    if (operation?.type != OP_READ_DESCRIPTOR || operation.key != descriptorKey) {
+      return
+    }
+
+    connection.activeOperation = null
+    if (status != BluetoothGatt.GATT_SUCCESS) {
+      replyError(
+        operation.result,
+        "read-failed",
+        "Bluetooth descriptor read failed with status $status.",
         mapOf("status" to status),
       )
       return
@@ -2364,6 +2666,14 @@ class OmniBlePlugin :
       "permissions" to descriptorPermissions(descriptor.permissions),
       "initialValue" to descriptor.value?.asUnsignedList(),
     )
+  }
+
+  private fun descriptorKey(
+    serviceUuid: String,
+    characteristicUuid: String,
+    descriptorUuid: String,
+  ): String {
+    return "$serviceUuid|$characteristicUuid|$descriptorUuid"
   }
 
   private fun characteristicProperties(properties: Int): List<String> {
