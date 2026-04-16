@@ -12,6 +12,11 @@ The current state is an early but usable cross-platform BLE foundation:
 - Android now implements the same central-side surface plus a first peripheral backend, including MTU / connection priority / PHY tuning helpers, and the Dart API can now check/request the runtime Bluetooth permissions those flows need alongside rationale/settings helpers.
 - Linux and Windows now expose desktop central GATT client flows plus a first peripheral/server backend. The desktop permission API continues to return `notRequired`.
 
+Implemented support and validated-on-hardware support are tracked separately.
+Use [docs/device_lab_runbook.md](docs/device_lab_runbook.md) for the operator
+workflow and [docs/validated_support_matrix.md](docs/validated_support_matrix.md)
+for release-facing validation status.
+
 ## API shape
 
 ```dart
@@ -125,7 +130,17 @@ Pass criteria:
 - `setNotification()` causes at least one `characteristicValueChanged` event on the subscribed characteristic.
 - Peripheral scenarios verify advertising start/stop, request events, responses, and server-side notifications on every backend, with the Linux caveat that subscription events are device-agnostic at the BlueZ layer.
 
+Operator workflow:
+
+1. Follow [docs/device_lab_runbook.md](docs/device_lab_runbook.md) to execute the
+   scenario.
+2. Copy the session report from the example app on both hosts after the run.
+3. Update [docs/validated_support_matrix.md](docs/validated_support_matrix.md)
+   with the outcome and date.
+
 ## Recommended next steps
 
-1. Run the device-lab matrix across Android, Apple, Windows, and Linux hardware and capture any interoperability gaps.
-2. Document any platform-specific caveats that show up on real hardware, especially around BlueZ advertising and Windows local-name behavior.
+1. Run the Priority 1 scenarios from [docs/validated_support_matrix.md](docs/validated_support_matrix.md) on real hardware.
+2. Fix any interoperability blockers found during those runs.
+3. Promote each scenario from `ready-for-lab` to `validated` only after the result is recorded in the matrix.
+4. Document any newly confirmed hardware caveats here once they have been reproduced in the lab.
