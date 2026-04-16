@@ -10,7 +10,7 @@ The current state is an early but usable cross-platform BLE foundation:
 - Platform channels are wired on every target.
 - iOS and macOS now implement adapter-state events, central scanning, connection state events, RSSI reads, service discovery, characteristic/descriptor read-write, notification subscriptions, and a first peripheral backend.
 - Android now implements the same central-side surface plus a first peripheral backend, and the Dart API can now check/request the runtime Bluetooth permissions those flows need.
-- Linux now exposes adapter-state events and native LE scanning via BlueZ, while Windows still remains scaffolding-only and the desktop permission API returns `notRequired`.
+- Linux now exposes adapter-state events and native LE scanning via BlueZ, and Windows now exposes adapter-state events plus native LE scanning via the WinRT advertisement watcher. The desktop permission API continues to return `notRequired`.
 
 ## API shape
 
@@ -83,7 +83,7 @@ Future<void> peripheralFlow() async {
 - `iOS`: `getCapabilities()`, adapter state events, `startScan()`, `stopScan()`, scan result events, `connect()`, `disconnect()`, connection state events, `readRssi()`, `discoverServices()`, `readCharacteristic()`, `readDescriptor()`, `writeCharacteristic()`, `writeDescriptor()`, `setNotification()`, characteristic value change events, `publishGattDatabase()`, `clearGattDatabase()`, `startAdvertising()`, `stopAdvertising()`, `notifyCharacteristicValue()`, `readRequest`/`writeRequest`/`subscriptionChanged` events, `respondToReadRequest()`, `respondToWriteRequest()`, `checkPermissions()`, `requestPermissions()` (`notRequired`)
 - `macOS`: `getCapabilities()`, adapter state events, `startScan()`, `stopScan()`, scan result events, `connect()`, `disconnect()`, connection state events, `readRssi()`, `discoverServices()`, `readCharacteristic()`, `readDescriptor()`, `writeCharacteristic()`, `writeDescriptor()`, `setNotification()`, characteristic value change events, `publishGattDatabase()`, `clearGattDatabase()`, `startAdvertising()`, `stopAdvertising()`, `notifyCharacteristicValue()`, `readRequest`/`writeRequest`/`subscriptionChanged` events, `respondToReadRequest()`, `respondToWriteRequest()`, `checkPermissions()`, `requestPermissions()` (`notRequired`)
 - `Android`: `getCapabilities()`, adapter state events, `startScan()`, `stopScan()`, scan result events, `scanError` events, `connect()`, `disconnect()`, connection state events, `readRssi()`, `discoverServices()`, `readCharacteristic()`, `readDescriptor()`, `writeCharacteristic()`, `writeDescriptor()`, `setNotification()`, characteristic value change events, `publishGattDatabase()`, `clearGattDatabase()`, `startAdvertising()`, `stopAdvertising()`, `notifyCharacteristicValue()`, `readRequest`/`writeRequest`/`subscriptionChanged` events, `respondToReadRequest()`, `respondToWriteRequest()`, `checkPermissions()`, `requestPermissions()`
-- `Windows`: scaffold plus `checkPermissions()`/`requestPermissions()` (`notRequired`)
+- `Windows`: `getCapabilities()`, adapter state events, `startScan()`, `stopScan()`, scan result events, `scanError` events, `checkPermissions()`, `requestPermissions()` (`notRequired`)
 - `Linux`: `getCapabilities()`, adapter state events, `startScan()`, `stopScan()`, scan result events, `checkPermissions()`, `requestPermissions()` (`notRequired`)
 
 Peripheral request events now include the request offset on Apple and Android, and Android write requests also include `preparedWrite` / `responseNeeded` metadata when the platform provides it.

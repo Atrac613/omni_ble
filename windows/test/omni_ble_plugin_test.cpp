@@ -35,6 +35,11 @@ TEST(OmniBlePlugin, GetPlatformVersion) {
 
   EXPECT_EQ(std::get<std::string>(result_map[EncodableValue("platform")]),
             "windows");
+  const auto& features =
+      std::get<flutter::EncodableList>(result_map[EncodableValue("availableFeatures")]);
+  EXPECT_EQ(features.size(), 2U);
+  EXPECT_EQ(std::get<std::string>(features[0]), "central");
+  EXPECT_EQ(std::get<std::string>(features[1]), "scanning");
 }
 
 }  // namespace test
