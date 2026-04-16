@@ -265,11 +265,13 @@ void main() {
       'deviceId': 'device-1',
       'serviceUuid': '0000180d-0000-1000-8000-00805f9b34fb',
       'characteristicUuid': '00002a37-0000-1000-8000-00805f9b34fb',
+      'offset': 4,
     });
 
     expect(event, isA<OmniBleReadRequestEvent>());
     expect((event as OmniBleReadRequestEvent).requestId, 'request-1');
     expect(event.deviceId, 'device-1');
+    expect(event.offset, 4);
   });
 
   test('OmniBleEvent parses write requests', () {
@@ -279,11 +281,17 @@ void main() {
       'deviceId': 'device-2',
       'serviceUuid': '0000180d-0000-1000-8000-00805f9b34fb',
       'characteristicUuid': '00002a37-0000-1000-8000-00805f9b34fb',
+      'offset': 2,
+      'preparedWrite': true,
+      'responseNeeded': false,
       'value': [9, 8, 7],
     });
 
     expect(event, isA<OmniBleWriteRequestEvent>());
     expect((event as OmniBleWriteRequestEvent).requestId, 'request-2');
+    expect(event.offset, 2);
+    expect(event.preparedWrite, isTrue);
+    expect(event.responseNeeded, isFalse);
     expect(event.value, Uint8List.fromList([9, 8, 7]));
   });
 

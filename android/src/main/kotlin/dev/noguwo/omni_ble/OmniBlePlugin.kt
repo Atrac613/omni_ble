@@ -440,6 +440,7 @@ class OmniBlePlugin :
             "deviceId" to normalizeDeviceId(device.address),
             "serviceUuid" to normalizeUuidString(characteristic.service.uuid.toString()),
             "characteristicUuid" to normalizeUuidString(characteristic.uuid.toString()),
+            "offset" to offset,
           ),
         )
       }
@@ -477,6 +478,9 @@ class OmniBlePlugin :
             "deviceId" to normalizeDeviceId(device.address),
             "serviceUuid" to normalizeUuidString(characteristic.service.uuid.toString()),
             "characteristicUuid" to normalizeUuidString(characteristic.uuid.toString()),
+            "offset" to offset,
+            "preparedWrite" to preparedWrite,
+            "responseNeeded" to responseNeeded,
             "value" to value.asUnsignedList(),
           ),
         )

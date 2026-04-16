@@ -485,6 +485,7 @@ sealed class OmniBleEvent {
           deviceId: map['deviceId']?.toString(),
           serviceUuid: (map['serviceUuid'] ?? '').toString(),
           characteristicUuid: (map['characteristicUuid'] ?? '').toString(),
+          offset: _intOrNull(map['offset']) ?? 0,
         );
       case OmniBleWriteRequestEvent.typeValue:
         return OmniBleWriteRequestEvent(
@@ -492,6 +493,9 @@ sealed class OmniBleEvent {
           deviceId: map['deviceId']?.toString(),
           serviceUuid: (map['serviceUuid'] ?? '').toString(),
           characteristicUuid: (map['characteristicUuid'] ?? '').toString(),
+          offset: _intOrNull(map['offset']) ?? 0,
+          preparedWrite: _boolOrNull(map['preparedWrite']),
+          responseNeeded: _boolOrNull(map['responseNeeded']),
           value: _bytesOrNull(map['value']) ?? Uint8List(0),
         );
       case OmniBleSubscriptionChanged.typeValue:
@@ -561,6 +565,7 @@ final class OmniBleReadRequestEvent extends OmniBleEvent {
     required this.requestId,
     required this.serviceUuid,
     required this.characteristicUuid,
+    required this.offset,
     this.deviceId,
   }) : super(typeValue);
 
@@ -570,6 +575,7 @@ final class OmniBleReadRequestEvent extends OmniBleEvent {
   final String? deviceId;
   final String serviceUuid;
   final String characteristicUuid;
+  final int offset;
 }
 
 final class OmniBleWriteRequestEvent extends OmniBleEvent {
@@ -577,7 +583,10 @@ final class OmniBleWriteRequestEvent extends OmniBleEvent {
     required this.requestId,
     required this.serviceUuid,
     required this.characteristicUuid,
+    required this.offset,
     required this.value,
+    this.preparedWrite,
+    this.responseNeeded,
     this.deviceId,
   }) : super(typeValue);
 
@@ -587,6 +596,9 @@ final class OmniBleWriteRequestEvent extends OmniBleEvent {
   final String? deviceId;
   final String serviceUuid;
   final String characteristicUuid;
+  final int offset;
+  final bool? preparedWrite;
+  final bool? responseNeeded;
   final Uint8List value;
 }
 
@@ -662,6 +674,21 @@ int? _intOrNull(Object? value) {
   }
   if (value is String) {
     return int.tryParse(value);
+  }
+  return null;
+}
+
+bool? _boolOrNull(Object? value) {
+  if (value is bool) {
+    return value;
+  }
+  if (value is String) {
+    switch (value) {
+      case 'true':
+        return true;
+      case 'false':
+        return false;
+    }
   }
   return null;
 }

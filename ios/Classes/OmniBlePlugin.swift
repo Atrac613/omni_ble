@@ -600,6 +600,7 @@ public class OmniBlePlugin: NSObject, FlutterPlugin, FlutterStreamHandler, CBCen
       "deviceId": request.central.identifier.uuidString,
       "serviceUuid": serviceUuid,
       "characteristicUuid": characteristicUuid,
+      "offset": request.offset,
     ])
   }
 
@@ -628,6 +629,7 @@ public class OmniBlePlugin: NSObject, FlutterPlugin, FlutterStreamHandler, CBCen
         "deviceId": request.central.identifier.uuidString,
         "serviceUuid": serviceUuid,
         "characteristicUuid": characteristicUuid,
+        "offset": request.offset,
         "value": Array(request.value ?? Data()),
       ])
     }

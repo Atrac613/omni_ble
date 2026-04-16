@@ -86,6 +86,8 @@ Future<void> peripheralFlow() async {
 - `Windows`: scaffold plus `checkPermissions()`/`requestPermissions()` (`notRequired`)
 - `Linux`: scaffold plus `checkPermissions()`/`requestPermissions()` (`notRequired`)
 
+Peripheral request events now include the request offset on Apple and Android, and Android write requests also include `preparedWrite` / `responseNeeded` metadata when the platform provides it.
+
 ## Android permissions
 
 - The plugin manifest declares BLE scan/connect/advertise permissions.
