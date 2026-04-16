@@ -37,11 +37,14 @@ TEST(OmniBlePlugin, GetPlatformVersion) {
             "windows");
   const auto& features =
       std::get<flutter::EncodableList>(result_map[EncodableValue("availableFeatures")]);
-  EXPECT_EQ(features.size(), 4U);
+  EXPECT_EQ(features.size(), 7U);
   EXPECT_EQ(std::get<std::string>(features[0]), "central");
   EXPECT_EQ(std::get<std::string>(features[1]), "scanning");
   EXPECT_EQ(std::get<std::string>(features[2]), "gattClient");
-  EXPECT_EQ(std::get<std::string>(features[3]), "notifications");
+  EXPECT_EQ(std::get<std::string>(features[3]), "peripheral");
+  EXPECT_EQ(std::get<std::string>(features[4]), "advertising");
+  EXPECT_EQ(std::get<std::string>(features[5]), "gattServer");
+  EXPECT_EQ(std::get<std::string>(features[6]), "notifications");
 }
 
 TEST(OmniBlePlugin, ConnectRequiresDeviceId) {
@@ -121,6 +124,32 @@ TEST(OmniBlePlugin, WriteDescriptorRejectsCccdWrites) {
   EXPECT_EQ(
       error_message,
       "Use setNotification() to update the client characteristic configuration descriptor.");
+}
+
+TEST(OmniBlePlugin, NotifyCharacteristicRequiresIdentifiers) {
+  OmniBlePlugin plugin;
+  std::string error_code;
+  std::string error_message;
+  EncodableMap arguments;
+  arguments[EncodableValue("value")] =
+      EncodableValue(flutter::EncodableList{EncodableValue(1)});
+  plugin.HandleMethodCall(
+      MethodCall("notifyCharacteristicValue",
+                 std::make_unique<EncodableValue>(arguments)),
+      std::make_unique<MethodResultFunctions<>>(
+          nullptr,
+          [&error_code, &error_message](const std::string& code,
+                                        const std::string& message,
+                                        const flutter::EncodableValue* details) {
+            error_code = code;
+            error_message = message;
+          },
+          nullptr));
+
+  EXPECT_EQ(error_code, "invalid-argument");
+  EXPECT_EQ(
+      error_message,
+      "`serviceUuid`, `characteristicUuid`, and `value` are required to notify subscribers.");
 }
 
 }  // namespace test
