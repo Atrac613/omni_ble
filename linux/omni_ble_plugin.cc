@@ -21,6 +21,9 @@ constexpr char kBluezBusName[] = "org.bluez";
 constexpr char kBluezRootPath[] = "/";
 constexpr char kAdapterInterface[] = "org.bluez.Adapter1";
 constexpr char kDeviceInterface[] = "org.bluez.Device1";
+constexpr char kGattServiceInterface[] = "org.bluez.GattService1";
+constexpr char kGattCharacteristicInterface[] = "org.bluez.GattCharacteristic1";
+constexpr char kGattDescriptorInterface[] = "org.bluez.GattDescriptor1";
 
 std::string normalize_uuid(const gchar* value) {
   if (value == nullptr) {
@@ -113,6 +116,21 @@ static void emit_adapter_state(OmniBlePlugin* self, const gchar* state) {
   send_event(self, event);
 }
 
+static void emit_connection_state(OmniBlePlugin* self,
+                                  const gchar* device_id,
+                                  const gchar* state) {
+  if (device_id == nullptr || strlen(device_id) == 0) {
+    return;
+  }
+
+  g_autoptr(FlValue) event = fl_value_new_map();
+  fl_value_set_string_take(event, "type",
+                           fl_value_new_string("connectionStateChanged"));
+  fl_value_set_string_take(event, "deviceId", fl_value_new_string(device_id));
+  fl_value_set_string_take(event, "state", fl_value_new_string(state));
+  send_event(self, event);
+}
+
 static GVariant* proxy_property(GDBusProxy* proxy, const gchar* property_name) {
   if (proxy == nullptr) {
     return nullptr;
@@ -153,6 +171,11 @@ static gchar* proxy_property_string_dup(GDBusProxy* proxy,
   return g_variant_dup_string(value, nullptr);
 }
 
+static gboolean proxy_property_has(GDBusProxy* proxy, const gchar* property_name) {
+  g_autoptr(GVariant) value = proxy_property(proxy, property_name);
+  return value != nullptr;
+}
+
 static FlValue* bytes_value_from_variant(GVariant* value) {
   g_autoptr(FlValue) bytes = fl_value_new_list();
   if (value == nullptr || !g_variant_is_of_type(value, G_VARIANT_TYPE("ay"))) {
@@ -167,6 +190,34 @@ static FlValue* bytes_value_from_variant(GVariant* value) {
     fl_value_append_take(bytes, fl_value_new_int(data[index]));
   }
   return fl_value_ref(bytes);
+}
+
+static FlValue* bytes_property_from_proxy(GDBusProxy* proxy,
+                                          const gchar* property_name) {
+  g_autoptr(GVariant) value = proxy_property(proxy, property_name);
+  return bytes_value_from_variant(value);
+}
+
+static gboolean changed_properties_contains(GVariant* changed_properties,
+                                            const gchar* property_name) {
+  if (changed_properties == nullptr ||
+      !g_variant_is_of_type(changed_properties, G_VARIANT_TYPE("a{sv}"))) {
+    return FALSE;
+  }
+
+  g_autoptr(GVariant) value =
+      g_variant_lookup_value(changed_properties, property_name, nullptr);
+  return value != nullptr;
+}
+
+static gboolean object_path_is_child_of(const gchar* object_path,
+                                        const gchar* parent_path) {
+  if (object_path == nullptr || parent_path == nullptr ||
+      !g_str_has_prefix(object_path, parent_path)) {
+    return FALSE;
+  }
+  const gsize parent_length = strlen(parent_path);
+  return object_path[parent_length] == '/' || object_path[parent_length] == '\0';
 }
 
 static FlValue* service_uuids_from_proxy(GDBusProxy* proxy) {
@@ -382,42 +433,242 @@ static gboolean ensure_object_manager(OmniBlePlugin* self, GError** error) {
           return;
         }
 
-        if (g_strcmp0(interface_name, kDeviceInterface) != 0 ||
-            !plugin->is_scanning) {
+        if (g_strcmp0(interface_name, kDeviceInterface) == 0) {
+          g_autofree gchar* address =
+              proxy_property_string_dup(interface_proxy, "Address");
+          if (changed_properties_contains(changed_properties, "Connected") &&
+              address != nullptr) {
+            emit_connection_state(
+                plugin, address,
+                proxy_property_bool(interface_proxy, "Connected", FALSE)
+                    ? "connected"
+                    : "disconnected");
+          }
+
+          if (!plugin->is_scanning) {
+            return;
+          }
+          if (!device_matches_filters(plugin, interface_proxy)) {
+            return;
+          }
+          if (address == nullptr) {
+            return;
+          }
+
+          const gboolean seen =
+              g_hash_table_contains(plugin->seen_devices, address);
+          if (!plugin->allow_duplicates && seen) {
+            return;
+          }
+
+          if (!seen) {
+            g_hash_table_add(plugin->seen_devices, g_strdup(address));
+          }
+
+          g_autoptr(FlValue) event = fl_value_new_map();
+          fl_value_set_string_take(event, "type", fl_value_new_string("scanResult"));
+          fl_value_set_string_take(event, "result",
+                                   build_scan_result_from_proxy(interface_proxy));
+          send_event(plugin, event);
           return;
         }
-
-        if (!device_matches_filters(plugin, interface_proxy)) {
-          return;
-        }
-
-        gchar* address = proxy_property_string_dup(interface_proxy, "Address");
-        if (address == nullptr) {
-          return;
-        }
-
-        const gboolean seen =
-            g_hash_table_contains(plugin->seen_devices, address);
-        if (!plugin->allow_duplicates && seen) {
-          g_free(address);
-          return;
-        }
-
-        if (!seen) {
-          g_hash_table_add(plugin->seen_devices, address);
-        } else {
-          g_free(address);
-        }
-
-        g_autoptr(FlValue) event = fl_value_new_map();
-        fl_value_set_string_take(event, "type", fl_value_new_string("scanResult"));
-        fl_value_set_string_take(event, "result",
-                                 build_scan_result_from_proxy(interface_proxy));
-        send_event(plugin, event);
       }),
       self);
 
   return TRUE;
+}
+
+static GDBusProxy* first_proxy_for_interface(OmniBlePlugin* self,
+                                             const gchar* interface_name) {
+  if (self->object_manager == nullptr) {
+    return nullptr;
+  }
+
+  GList* objects = g_dbus_object_manager_get_objects(self->object_manager);
+  GDBusProxy* proxy = nullptr;
+  for (GList* element = objects; element != nullptr; element = element->next) {
+    GDBusObject* object = G_DBUS_OBJECT(element->data);
+    g_autoptr(GDBusInterface) interface_ =
+        g_dbus_object_get_interface(object, interface_name);
+    if (interface_ != nullptr) {
+      proxy = G_DBUS_PROXY(g_object_ref(interface_));
+      break;
+    }
+  }
+
+  g_list_free_full(objects, g_object_unref);
+  return proxy;
+}
+
+static GDBusProxy* device_proxy_for_id(OmniBlePlugin* self,
+                                       const gchar* device_id) {
+  if (self->object_manager == nullptr || device_id == nullptr ||
+      strlen(device_id) == 0) {
+    return nullptr;
+  }
+
+  GList* objects = g_dbus_object_manager_get_objects(self->object_manager);
+  GDBusProxy* proxy = nullptr;
+  for (GList* element = objects; element != nullptr; element = element->next) {
+    GDBusObject* object = G_DBUS_OBJECT(element->data);
+    g_autoptr(GDBusInterface) interface_ =
+        g_dbus_object_get_interface(object, kDeviceInterface);
+    if (interface_ == nullptr) {
+      continue;
+    }
+
+    GDBusProxy* candidate = G_DBUS_PROXY(interface_);
+    g_autofree gchar* address = proxy_property_string_dup(candidate, "Address");
+    if (g_strcmp0(address, device_id) == 0) {
+      proxy = G_DBUS_PROXY(g_object_ref(interface_));
+      break;
+    }
+  }
+
+  g_list_free_full(objects, g_object_unref);
+  return proxy;
+}
+
+static gboolean wait_for_device_connection_state(GDBusProxy* proxy,
+                                                 gboolean connected,
+                                                 gint timeout_ms) {
+  const gint64 timeout_usecs =
+      static_cast<gint64>(timeout_ms <= 0 ? 10000 : timeout_ms) * 1000;
+  const gint64 deadline = g_get_monotonic_time() + timeout_usecs;
+
+  while (g_get_monotonic_time() < deadline) {
+    if (proxy_property_bool(proxy, "Connected", FALSE) == connected) {
+      return TRUE;
+    }
+
+    while (g_main_context_pending(nullptr)) {
+      g_main_context_iteration(nullptr, FALSE);
+    }
+    g_usleep(100000);
+  }
+
+  return proxy_property_bool(proxy, "Connected", FALSE) == connected;
+}
+
+static gboolean wait_for_services_resolved(GDBusProxy* device_proxy,
+                                           gint timeout_ms) {
+  const gint64 timeout_usecs =
+      static_cast<gint64>(timeout_ms <= 0 ? 10000 : timeout_ms) * 1000;
+  const gint64 deadline = g_get_monotonic_time() + timeout_usecs;
+
+  while (g_get_monotonic_time() < deadline) {
+    if (!proxy_property_bool(device_proxy, "Connected", FALSE)) {
+      return FALSE;
+    }
+    if (proxy_property_bool(device_proxy, "ServicesResolved", FALSE)) {
+      return TRUE;
+    }
+
+    while (g_main_context_pending(nullptr)) {
+      g_main_context_iteration(nullptr, FALSE);
+    }
+    g_usleep(100000);
+  }
+
+  return proxy_property_bool(device_proxy, "ServicesResolved", FALSE);
+}
+
+static FlValue* gatt_properties_from_flags(GDBusProxy* proxy) {
+  g_autoptr(FlValue) properties = fl_value_new_list();
+  g_autoptr(GVariant) flags = proxy_property(proxy, "Flags");
+  if (flags == nullptr || !g_variant_is_of_type(flags, G_VARIANT_TYPE("as"))) {
+    return fl_value_ref(properties);
+  }
+
+  gboolean has_read = FALSE;
+  gboolean has_write = FALSE;
+  gboolean has_write_without_response = FALSE;
+  gboolean has_notify = FALSE;
+  gboolean has_indicate = FALSE;
+
+  GVariantIter iter;
+  const gchar* flag = nullptr;
+  g_variant_iter_init(&iter, flags);
+  while (g_variant_iter_next(&iter, "&s", &flag)) {
+    if (g_strcmp0(flag, "read") == 0) {
+      has_read = TRUE;
+    } else if (g_strcmp0(flag, "write") == 0 ||
+               g_strcmp0(flag, "reliable-write") == 0) {
+      has_write = TRUE;
+    } else if (g_strcmp0(flag, "write-without-response") == 0) {
+      has_write_without_response = TRUE;
+    } else if (g_strcmp0(flag, "notify") == 0) {
+      has_notify = TRUE;
+    } else if (g_strcmp0(flag, "indicate") == 0) {
+      has_indicate = TRUE;
+    }
+  }
+
+  if (has_read) {
+    fl_value_append_take(properties, fl_value_new_string("read"));
+  }
+  if (has_write) {
+    fl_value_append_take(properties, fl_value_new_string("write"));
+  }
+  if (has_write_without_response) {
+    fl_value_append_take(properties,
+                         fl_value_new_string("writeWithoutResponse"));
+  }
+  if (has_notify) {
+    fl_value_append_take(properties, fl_value_new_string("notify"));
+  }
+  if (has_indicate) {
+    fl_value_append_take(properties, fl_value_new_string("indicate"));
+  }
+
+  return fl_value_ref(properties);
+}
+
+static FlValue* gatt_permissions_from_flags(GDBusProxy* proxy) {
+  g_autoptr(FlValue) permissions = fl_value_new_list();
+  g_autoptr(GVariant) flags = proxy_property(proxy, "Flags");
+  if (flags == nullptr || !g_variant_is_of_type(flags, G_VARIANT_TYPE("as"))) {
+    return fl_value_ref(permissions);
+  }
+
+  gboolean has_read = FALSE;
+  gboolean has_write = FALSE;
+  gboolean has_read_encrypted = FALSE;
+  gboolean has_write_encrypted = FALSE;
+
+  GVariantIter iter;
+  const gchar* flag = nullptr;
+  g_variant_iter_init(&iter, flags);
+  while (g_variant_iter_next(&iter, "&s", &flag)) {
+    if (g_strcmp0(flag, "read") == 0) {
+      has_read = TRUE;
+    } else if (g_strcmp0(flag, "write") == 0 ||
+               g_strcmp0(flag, "write-without-response") == 0 ||
+               g_strcmp0(flag, "reliable-write") == 0) {
+      has_write = TRUE;
+    } else if (g_strcmp0(flag, "encrypt-read") == 0 ||
+               g_strcmp0(flag, "encrypt-authenticated-read") == 0) {
+      has_read_encrypted = TRUE;
+    } else if (g_strcmp0(flag, "encrypt-write") == 0 ||
+               g_strcmp0(flag, "encrypt-authenticated-write") == 0) {
+      has_write_encrypted = TRUE;
+    }
+  }
+
+  if (has_read) {
+    fl_value_append_take(permissions, fl_value_new_string("read"));
+  }
+  if (has_write) {
+    fl_value_append_take(permissions, fl_value_new_string("write"));
+  }
+  if (has_read_encrypted) {
+    fl_value_append_take(permissions, fl_value_new_string("readEncrypted"));
+  }
+  if (has_write_encrypted) {
+    fl_value_append_take(permissions, fl_value_new_string("writeEncrypted"));
+  }
+
+  return fl_value_ref(permissions);
 }
 
 static GDBusProxy* adapter_proxy(OmniBlePlugin* self) {
@@ -494,6 +745,279 @@ static void emit_existing_devices(OmniBlePlugin* self) {
   }
 
   g_list_free_full(objects, g_object_unref);
+}
+
+static const gchar* lookup_string_argument(FlValue* arguments,
+                                           const gchar* key) {
+  if (arguments == nullptr || fl_value_get_type(arguments) != FL_VALUE_TYPE_MAP) {
+    return nullptr;
+  }
+
+  FlValue* value = fl_value_lookup_string(arguments, key);
+  if (value == nullptr || fl_value_get_type(value) != FL_VALUE_TYPE_STRING) {
+    return nullptr;
+  }
+  return fl_value_get_string(value);
+}
+
+static gint lookup_int_argument(FlValue* arguments,
+                                const gchar* key,
+                                gint default_value) {
+  if (arguments == nullptr || fl_value_get_type(arguments) != FL_VALUE_TYPE_MAP) {
+    return default_value;
+  }
+
+  FlValue* value = fl_value_lookup_string(arguments, key);
+  if (value == nullptr) {
+    return default_value;
+  }
+  if (fl_value_get_type(value) == FL_VALUE_TYPE_INT) {
+    return static_cast<gint>(fl_value_get_int(value));
+  }
+  return default_value;
+}
+
+static FlValue* build_descriptor_payload(GDBusProxy* proxy) {
+  g_autoptr(FlValue) descriptor = fl_value_new_map();
+  g_autofree gchar* uuid = proxy_property_string_dup(proxy, "UUID");
+  fl_value_set_string_take(
+      descriptor, "uuid",
+      fl_value_new_string(normalize_uuid(uuid).c_str()));
+  fl_value_set_string_take(descriptor, "permissions",
+                           gatt_permissions_from_flags(proxy));
+  fl_value_set_string_take(descriptor, "initialValue",
+                           bytes_property_from_proxy(proxy, "Value"));
+  return fl_value_ref(descriptor);
+}
+
+static FlValue* build_characteristic_payload(GList* objects,
+                                             const gchar* characteristic_path,
+                                             GDBusProxy* characteristic_proxy) {
+  g_autoptr(FlValue) characteristic = fl_value_new_map();
+  g_autofree gchar* uuid = proxy_property_string_dup(characteristic_proxy, "UUID");
+  fl_value_set_string_take(
+      characteristic, "uuid",
+      fl_value_new_string(normalize_uuid(uuid).c_str()));
+  fl_value_set_string_take(characteristic, "properties",
+                           gatt_properties_from_flags(characteristic_proxy));
+  fl_value_set_string_take(characteristic, "permissions",
+                           gatt_permissions_from_flags(characteristic_proxy));
+  fl_value_set_string_take(characteristic, "initialValue",
+                           bytes_property_from_proxy(characteristic_proxy, "Value"));
+
+  g_autoptr(FlValue) descriptors = fl_value_new_list();
+  for (GList* element = objects; element != nullptr; element = element->next) {
+    GDBusObject* object = G_DBUS_OBJECT(element->data);
+    g_autoptr(GDBusInterface) interface_ =
+        g_dbus_object_get_interface(object, kGattDescriptorInterface);
+    if (interface_ == nullptr) {
+      continue;
+    }
+
+    GDBusProxy* descriptor_proxy = G_DBUS_PROXY(interface_);
+    const gchar* descriptor_path = g_dbus_proxy_get_object_path(descriptor_proxy);
+    if (!object_path_is_child_of(descriptor_path, characteristic_path) ||
+        g_strcmp0(descriptor_path, characteristic_path) == 0) {
+      continue;
+    }
+
+    fl_value_append_take(descriptors, build_descriptor_payload(descriptor_proxy));
+  }
+
+  fl_value_set_string_take(characteristic, "descriptors", fl_value_ref(descriptors));
+  return fl_value_ref(characteristic);
+}
+
+static FlValue* build_service_payload(GList* objects,
+                                      const gchar* service_path,
+                                      GDBusProxy* service_proxy) {
+  g_autoptr(FlValue) service = fl_value_new_map();
+  g_autofree gchar* uuid = proxy_property_string_dup(service_proxy, "UUID");
+  fl_value_set_string_take(
+      service, "uuid", fl_value_new_string(normalize_uuid(uuid).c_str()));
+  fl_value_set_string_take(
+      service, "primary",
+      fl_value_new_bool(proxy_property_bool(service_proxy, "Primary", TRUE)));
+
+  g_autoptr(FlValue) characteristics = fl_value_new_list();
+  for (GList* element = objects; element != nullptr; element = element->next) {
+    GDBusObject* object = G_DBUS_OBJECT(element->data);
+    g_autoptr(GDBusInterface) interface_ =
+        g_dbus_object_get_interface(object, kGattCharacteristicInterface);
+    if (interface_ == nullptr) {
+      continue;
+    }
+
+    GDBusProxy* characteristic_proxy = G_DBUS_PROXY(interface_);
+    const gchar* characteristic_path =
+        g_dbus_proxy_get_object_path(characteristic_proxy);
+    if (!object_path_is_child_of(characteristic_path, service_path) ||
+        g_strcmp0(characteristic_path, service_path) == 0) {
+      continue;
+    }
+
+    fl_value_append_take(
+        characteristics,
+        build_characteristic_payload(objects, characteristic_path,
+                                     characteristic_proxy));
+  }
+
+  fl_value_set_string_take(service, "characteristics",
+                           fl_value_ref(characteristics));
+  return fl_value_ref(service);
+}
+
+static FlValue* build_services_for_device(OmniBlePlugin* self,
+                                          const gchar* device_path) {
+  g_autoptr(FlValue) services = fl_value_new_list();
+  if (self->object_manager == nullptr || device_path == nullptr) {
+    return fl_value_ref(services);
+  }
+
+  GList* objects = g_dbus_object_manager_get_objects(self->object_manager);
+  for (GList* element = objects; element != nullptr; element = element->next) {
+    GDBusObject* object = G_DBUS_OBJECT(element->data);
+    g_autoptr(GDBusInterface) interface_ =
+        g_dbus_object_get_interface(object, kGattServiceInterface);
+    if (interface_ == nullptr) {
+      continue;
+    }
+
+    GDBusProxy* service_proxy = G_DBUS_PROXY(interface_);
+    const gchar* service_path = g_dbus_proxy_get_object_path(service_proxy);
+    if (!object_path_is_child_of(service_path, device_path) ||
+        g_strcmp0(service_path, device_path) == 0) {
+      continue;
+    }
+
+    fl_value_append_take(
+        services,
+        build_service_payload(objects, service_path, service_proxy));
+  }
+
+  g_list_free_full(objects, g_object_unref);
+  return fl_value_ref(services);
+}
+
+static FlMethodResponse* connect_device(OmniBlePlugin* self, FlValue* arguments) {
+  g_autoptr(GError) error = nullptr;
+  if (!ensure_object_manager(self, &error)) {
+    return error_response("unavailable",
+                          error != nullptr ? error->message
+                                           : "BlueZ is unavailable.");
+  }
+
+  g_autoptr(GDBusProxy) adapter = first_proxy_for_interface(self, kAdapterInterface);
+  if (adapter == nullptr) {
+    return error_response("adapter-unavailable",
+                          "Bluetooth adapter must be available before connecting.");
+  }
+  if (!proxy_property_bool(adapter, "Powered", FALSE)) {
+    g_autoptr(FlValue) details = fl_value_new_map();
+    fl_value_set_string_take(details, "state", fl_value_new_string("poweredOff"));
+    return error_response(
+        "adapter-unavailable",
+        "Bluetooth adapter must be powered on before connecting.", details);
+  }
+
+  const gchar* device_id = lookup_string_argument(arguments, "deviceId");
+  if (device_id == nullptr || strlen(device_id) == 0) {
+    return error_response("invalid-argument",
+                          "`deviceId` is required to connect.");
+  }
+
+  g_autoptr(GDBusProxy) device_proxy = device_proxy_for_id(self, device_id);
+  if (device_proxy == nullptr) {
+    return error_response(
+        "unavailable",
+        "Bluetooth device is not available. Scan first or reconnect to a known device.");
+  }
+
+  if (proxy_property_bool(device_proxy, "Connected", FALSE)) {
+    return success_response();
+  }
+
+  emit_connection_state(self, device_id, "connecting");
+  gint timeout_ms = lookup_int_argument(arguments, "timeoutMs", 10000);
+  if (g_dbus_proxy_call_sync(device_proxy, "Connect", g_variant_new("()"),
+                             G_DBUS_CALL_FLAGS_NONE, -1, nullptr, &error) ==
+      nullptr) {
+    emit_connection_state(self, device_id, "disconnected");
+    return error_response("connection-failed",
+                          error != nullptr ? error->message
+                                           : "Failed to connect to the device.");
+  }
+
+  if (!wait_for_device_connection_state(device_proxy, TRUE, timeout_ms)) {
+    emit_connection_state(self, device_id, "disconnected");
+    return error_response("connection-failed",
+                          "Bluetooth connection timed out on Linux.");
+  }
+
+  return success_response();
+}
+
+static FlMethodResponse* disconnect_device(OmniBlePlugin* self, FlValue* arguments) {
+  g_autoptr(GError) error = nullptr;
+  if (!ensure_object_manager(self, &error)) {
+    return error_response("unavailable",
+                          error != nullptr ? error->message
+                                           : "BlueZ is unavailable.");
+  }
+
+  const gchar* device_id = lookup_string_argument(arguments, "deviceId");
+  if (device_id == nullptr || strlen(device_id) == 0) {
+    return error_response("invalid-argument",
+                          "`deviceId` is required to disconnect.");
+  }
+
+  g_autoptr(GDBusProxy) device_proxy = device_proxy_for_id(self, device_id);
+  if (device_proxy == nullptr ||
+      !proxy_property_bool(device_proxy, "Connected", FALSE)) {
+    return success_response();
+  }
+
+  emit_connection_state(self, device_id, "disconnecting");
+  if (g_dbus_proxy_call_sync(device_proxy, "Disconnect", g_variant_new("()"),
+                             G_DBUS_CALL_FLAGS_NONE, -1, nullptr, &error) ==
+      nullptr) {
+    return error_response("disconnect-failed",
+                          error != nullptr ? error->message
+                                           : "Failed to disconnect from the device.");
+  }
+
+  wait_for_device_connection_state(device_proxy, FALSE, 5000);
+  return success_response();
+}
+
+static FlMethodResponse* discover_services(OmniBlePlugin* self, FlValue* arguments) {
+  g_autoptr(GError) error = nullptr;
+  if (!ensure_object_manager(self, &error)) {
+    return error_response("unavailable",
+                          error != nullptr ? error->message
+                                           : "BlueZ is unavailable.");
+  }
+
+  const gchar* device_id = lookup_string_argument(arguments, "deviceId");
+  if (device_id == nullptr || strlen(device_id) == 0) {
+    return error_response("invalid-argument",
+                          "`deviceId` is required to discover services.");
+  }
+
+  g_autoptr(GDBusProxy) device_proxy = device_proxy_for_id(self, device_id);
+  if (device_proxy == nullptr || !proxy_property_bool(device_proxy, "Connected", FALSE)) {
+    return error_response(
+        "not-connected",
+        "Bluetooth device must be connected before discovering services.");
+  }
+
+  if (!wait_for_services_resolved(device_proxy, 10000)) {
+    return error_response("discovery-failed",
+                          "Bluetooth service discovery timed out on Linux.");
+  }
+
+  const gchar* device_path = g_dbus_proxy_get_object_path(device_proxy);
+  return success_response(build_services_for_device(self, device_path));
 }
 
 static FlMethodResponse* permission_status_response(FlValue* arguments) {
@@ -689,6 +1213,12 @@ static void omni_ble_plugin_handle_method_call(OmniBlePlugin* self,
     response = start_scan(self, fl_method_call_get_args(method_call));
   } else if (strcmp(method, "stopScan") == 0) {
     response = stop_scan(self);
+  } else if (strcmp(method, "connect") == 0) {
+    response = connect_device(self, fl_method_call_get_args(method_call));
+  } else if (strcmp(method, "disconnect") == 0) {
+    response = disconnect_device(self, fl_method_call_get_args(method_call));
+  } else if (strcmp(method, "discoverServices") == 0) {
+    response = discover_services(self, fl_method_call_get_args(method_call));
   } else {
     response = FL_METHOD_RESPONSE(fl_method_not_implemented_response_new());
   }
