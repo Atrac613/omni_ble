@@ -25,6 +25,14 @@ TEST(OmniBlePlugin, GetCapabilities) {
   ASSERT_EQ(fl_value_get_type(result), FL_VALUE_TYPE_MAP);
   EXPECT_STREQ(fl_value_get_string(fl_value_lookup_string(result, "platform")),
                "linux");
+  FlValue* features = fl_value_lookup_string(result, "availableFeatures");
+  ASSERT_NE(features, nullptr);
+  ASSERT_EQ(fl_value_get_type(features), FL_VALUE_TYPE_LIST);
+  ASSERT_EQ(fl_value_get_length(features), 2U);
+  EXPECT_STREQ(fl_value_get_string(fl_value_get_list_value(features, 0)),
+               "central");
+  EXPECT_STREQ(fl_value_get_string(fl_value_get_list_value(features, 1)),
+               "scanning");
 }
 
 }  // namespace test

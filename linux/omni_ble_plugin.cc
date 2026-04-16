@@ -4,7 +4,10 @@
 #include <gtk/gtk.h>
 #include <sys/utsname.h>
 
+#include <algorithm>
+#include <cctype>
 #include <cstring>
+#include <string>
 
 #include "omni_ble_plugin_private.h"
 
@@ -12,11 +15,486 @@
   (G_TYPE_CHECK_INSTANCE_CAST((obj), omni_ble_plugin_get_type(), \
                               OmniBlePlugin))
 
+namespace {
+
+constexpr char kBluezBusName[] = "org.bluez";
+constexpr char kBluezRootPath[] = "/";
+constexpr char kAdapterInterface[] = "org.bluez.Adapter1";
+constexpr char kDeviceInterface[] = "org.bluez.Device1";
+
+std::string normalize_uuid(const gchar* value) {
+  if (value == nullptr) {
+    return {};
+  }
+
+  std::string uuid(value);
+  std::transform(uuid.begin(), uuid.end(), uuid.begin(), [](unsigned char ch) {
+    return static_cast<char>(std::tolower(ch));
+  });
+
+  if (uuid.size() == 4) {
+    return "0000" + uuid + "-0000-1000-8000-00805f9b34fb";
+  }
+  if (uuid.size() == 8) {
+    return uuid + "-0000-1000-8000-00805f9b34fb";
+  }
+  return uuid;
+}
+
+}  // namespace
+
 struct _OmniBlePlugin {
   GObject parent_instance;
+  FlEventChannel* event_channel;
+  gboolean event_listening;
+  gboolean is_scanning;
+  gboolean allow_duplicates;
+  GDBusObjectManager* object_manager;
+  GHashTable* seen_devices;
+  GPtrArray* service_filters;
+  gulong object_added_handler_id;
+  gulong properties_changed_handler_id;
 };
 
 G_DEFINE_TYPE(OmniBlePlugin, omni_ble_plugin, g_object_get_type())
+
+static FlMethodResponse* success_response(FlValue* value = nullptr) {
+  return FL_METHOD_RESPONSE(fl_method_success_response_new(value));
+}
+
+static FlMethodResponse* error_response(const gchar* code,
+                                        const gchar* message,
+                                        FlValue* details = nullptr) {
+  return FL_METHOD_RESPONSE(
+      fl_method_error_response_new(code, message, details));
+}
+
+static void clear_service_filters(OmniBlePlugin* self) {
+  if (self->service_filters == nullptr) {
+    self->service_filters = g_ptr_array_new_with_free_func(g_free);
+    return;
+  }
+
+  while (self->service_filters->len > 0) {
+    g_ptr_array_remove_index(self->service_filters,
+                             self->service_filters->len - 1);
+  }
+}
+
+static void clear_seen_devices(OmniBlePlugin* self) {
+  if (self->seen_devices == nullptr) {
+    self->seen_devices =
+        g_hash_table_new_full(g_str_hash, g_str_equal, g_free, nullptr);
+    return;
+  }
+
+  g_hash_table_remove_all(self->seen_devices);
+}
+
+static gboolean send_event(OmniBlePlugin* self, FlValue* event) {
+  if (!self->event_listening || self->event_channel == nullptr) {
+    return FALSE;
+  }
+
+  g_autoptr(GError) error = nullptr;
+  if (!fl_event_channel_send(self->event_channel, event, nullptr, &error)) {
+    g_warning("Failed to send omni_ble event: %s", error->message);
+    return FALSE;
+  }
+
+  return TRUE;
+}
+
+static void emit_adapter_state(OmniBlePlugin* self, const gchar* state) {
+  g_autoptr(FlValue) event = fl_value_new_map();
+  fl_value_set_string_take(event, "type",
+                           fl_value_new_string("adapterStateChanged"));
+  fl_value_set_string_take(event, "state", fl_value_new_string(state));
+  send_event(self, event);
+}
+
+static GVariant* proxy_property(GDBusProxy* proxy, const gchar* property_name) {
+  if (proxy == nullptr) {
+    return nullptr;
+  }
+
+  return g_dbus_proxy_get_cached_property(proxy, property_name);
+}
+
+static gboolean proxy_property_bool(GDBusProxy* proxy,
+                                    const gchar* property_name,
+                                    gboolean default_value) {
+  g_autoptr(GVariant) value = proxy_property(proxy, property_name);
+  if (value == nullptr) {
+    return default_value;
+  }
+
+  return g_variant_get_boolean(value);
+}
+
+static gint16 proxy_property_int16(GDBusProxy* proxy,
+                                   const gchar* property_name,
+                                   gint16 default_value) {
+  g_autoptr(GVariant) value = proxy_property(proxy, property_name);
+  if (value == nullptr) {
+    return default_value;
+  }
+
+  return g_variant_get_int16(value);
+}
+
+static gchar* proxy_property_string_dup(GDBusProxy* proxy,
+                                        const gchar* property_name) {
+  g_autoptr(GVariant) value = proxy_property(proxy, property_name);
+  if (value == nullptr) {
+    return nullptr;
+  }
+
+  return g_variant_dup_string(value, nullptr);
+}
+
+static FlValue* bytes_value_from_variant(GVariant* value) {
+  g_autoptr(FlValue) bytes = fl_value_new_list();
+  if (value == nullptr || !g_variant_is_of_type(value, G_VARIANT_TYPE("ay"))) {
+    return fl_value_ref(bytes);
+  }
+
+  gsize length = 0;
+  const guint8* data =
+      static_cast<const guint8*>(g_variant_get_fixed_array(value, &length,
+                                                           sizeof(guint8)));
+  for (gsize index = 0; index < length; index++) {
+    fl_value_append_take(bytes, fl_value_new_int(data[index]));
+  }
+  return fl_value_ref(bytes);
+}
+
+static FlValue* service_uuids_from_proxy(GDBusProxy* proxy) {
+  g_autoptr(FlValue) uuids = fl_value_new_list();
+  g_autoptr(GVariant) value = proxy_property(proxy, "UUIDs");
+  if (value == nullptr) {
+    return fl_value_ref(uuids);
+  }
+
+  GVariantIter iter;
+  const gchar* uuid = nullptr;
+  g_variant_iter_init(&iter, value);
+  while (g_variant_iter_next(&iter, "&s", &uuid)) {
+    fl_value_append_take(uuids,
+                         fl_value_new_string(normalize_uuid(uuid).c_str()));
+  }
+
+  return fl_value_ref(uuids);
+}
+
+static gboolean device_matches_filters(OmniBlePlugin* self, GDBusProxy* proxy) {
+  if (self->service_filters == nullptr || self->service_filters->len == 0) {
+    return TRUE;
+  }
+
+  g_autoptr(GVariant) value = proxy_property(proxy, "UUIDs");
+  if (value == nullptr) {
+    return FALSE;
+  }
+
+  GVariantIter iter;
+  const gchar* uuid = nullptr;
+  g_variant_iter_init(&iter, value);
+  while (g_variant_iter_next(&iter, "&s", &uuid)) {
+    const std::string normalized = normalize_uuid(uuid);
+    for (guint index = 0; index < self->service_filters->len; index++) {
+      const gchar* filter = static_cast<const gchar*>(
+          g_ptr_array_index(self->service_filters, index));
+      if (normalized == filter) {
+        return TRUE;
+      }
+    }
+  }
+
+  return FALSE;
+}
+
+static FlValue* service_data_from_proxy(GDBusProxy* proxy) {
+  g_autoptr(FlValue) service_data = fl_value_new_map();
+  g_autoptr(GVariant) value = proxy_property(proxy, "ServiceData");
+  if (value == nullptr || !g_variant_is_of_type(value, G_VARIANT_TYPE("a{sv}"))) {
+    return fl_value_ref(service_data);
+  }
+
+  GVariantIter iter;
+  const gchar* uuid = nullptr;
+  GVariant* bytes_variant = nullptr;
+  g_variant_iter_init(&iter, value);
+  while (g_variant_iter_next(&iter, "{&sv}", &uuid, &bytes_variant)) {
+    g_autoptr(GVariant) owned_variant = bytes_variant;
+    fl_value_set_string_take(service_data, normalize_uuid(uuid).c_str(),
+                             bytes_value_from_variant(owned_variant));
+  }
+
+  return fl_value_ref(service_data);
+}
+
+static FlValue* manufacturer_data_from_proxy(GDBusProxy* proxy) {
+  g_autoptr(GVariant) value = proxy_property(proxy, "ManufacturerData");
+  if (value == nullptr || !g_variant_is_of_type(value, G_VARIANT_TYPE("a{qv}"))) {
+    return nullptr;
+  }
+
+  GVariantIter iter;
+  guint16 manufacturer_id = 0;
+  GVariant* bytes_variant = nullptr;
+  g_variant_iter_init(&iter, value);
+  if (!g_variant_iter_next(&iter, "{qv}", &manufacturer_id, &bytes_variant)) {
+    return nullptr;
+  }
+
+  g_autoptr(GVariant) owned_variant = bytes_variant;
+  g_autoptr(GVariant) raw_bytes = g_variant_get_variant(owned_variant);
+  g_autoptr(FlValue) bytes = fl_value_new_list();
+  fl_value_append_take(bytes, fl_value_new_int(manufacturer_id & 0xFF));
+  fl_value_append_take(bytes, fl_value_new_int((manufacturer_id >> 8) & 0xFF));
+
+  if (raw_bytes != nullptr &&
+      g_variant_is_of_type(raw_bytes, G_VARIANT_TYPE("ay"))) {
+    gsize length = 0;
+    const guint8* data = static_cast<const guint8*>(
+        g_variant_get_fixed_array(raw_bytes, &length, sizeof(guint8)));
+    for (gsize index = 0; index < length; index++) {
+      fl_value_append_take(bytes, fl_value_new_int(data[index]));
+    }
+  }
+
+  return fl_value_ref(bytes);
+}
+
+static FlValue* build_scan_result_from_proxy(GDBusProxy* proxy) {
+  g_autoptr(FlValue) result = fl_value_new_map();
+  g_autofree gchar* address = proxy_property_string_dup(proxy, "Address");
+  if (address == nullptr || strlen(address) == 0) {
+    return fl_value_ref(result);
+  }
+
+  fl_value_set_string_take(result, "deviceId", fl_value_new_string(address));
+  {
+    g_autofree gchar* name = proxy_property_string_dup(proxy, "Alias");
+    if (name == nullptr || strlen(name) == 0) {
+      g_clear_pointer(&name, g_free);
+      name = proxy_property_string_dup(proxy, "Name");
+    }
+    if (name != nullptr && strlen(name) > 0) {
+      fl_value_set_string_take(result, "name", fl_value_new_string(name));
+    }
+  }
+  fl_value_set_string_take(result, "rssi",
+                           fl_value_new_int(proxy_property_int16(proxy, "RSSI", 0)));
+  fl_value_set_string_take(result, "serviceUuids", service_uuids_from_proxy(proxy));
+  fl_value_set_string_take(result, "serviceData", service_data_from_proxy(proxy));
+  if (FlValue* manufacturer_data = manufacturer_data_from_proxy(proxy);
+      manufacturer_data != nullptr) {
+    fl_value_set_string_take(result, "manufacturerData", manufacturer_data);
+  }
+  fl_value_set_string_take(result, "connectable", fl_value_new_bool(TRUE));
+
+  return fl_value_ref(result);
+}
+
+static gboolean ensure_object_manager(OmniBlePlugin* self, GError** error) {
+  if (self->object_manager != nullptr) {
+    return TRUE;
+  }
+
+  self->object_manager = g_dbus_object_manager_client_new_for_bus_sync(
+      G_BUS_TYPE_SYSTEM, G_DBUS_OBJECT_MANAGER_CLIENT_FLAGS_NONE, kBluezBusName,
+      kBluezRootPath, nullptr, nullptr, nullptr, nullptr, error);
+  if (self->object_manager == nullptr) {
+    return FALSE;
+  }
+
+  self->object_added_handler_id =
+      g_signal_connect(self->object_manager, "object-added",
+                       G_CALLBACK(+[](GDBusObjectManager* manager,
+                                      GDBusObject* object,
+                                      gpointer user_data) {
+                         auto* plugin =
+                             static_cast<OmniBlePlugin*>(user_data);
+                         if (!plugin->is_scanning) {
+                           return;
+                         }
+
+                         g_autoptr(GDBusInterface) interface_ =
+                             g_dbus_object_get_interface(object,
+                                                         kDeviceInterface);
+                         if (interface_ == nullptr) {
+                           return;
+                         }
+
+                         GDBusProxy* proxy = G_DBUS_PROXY(interface_);
+                         if (!device_matches_filters(plugin, proxy)) {
+                           return;
+                         }
+
+                         gchar* address = proxy_property_string_dup(proxy, "Address");
+                         if (address == nullptr) {
+                           return;
+                         }
+
+                         const gboolean seen = g_hash_table_contains(
+                             plugin->seen_devices, address);
+                         if (!plugin->allow_duplicates && seen) {
+                           g_free(address);
+                           return;
+                         }
+
+                         if (!seen) {
+                           g_hash_table_add(plugin->seen_devices, address);
+                         } else {
+                           g_free(address);
+                         }
+
+                         g_autoptr(FlValue) event = fl_value_new_map();
+                         fl_value_set_string_take(event, "type",
+                                                  fl_value_new_string(
+                                                      "scanResult"));
+                         fl_value_set_string_take(event, "result",
+                                                  build_scan_result_from_proxy(
+                                                      proxy));
+                         send_event(plugin, event);
+                       }),
+                       self);
+
+  self->properties_changed_handler_id = g_signal_connect(
+      self->object_manager, "interface-proxy-properties-changed",
+      G_CALLBACK(+[](GDBusObjectManagerClient* manager,
+                     GDBusObjectProxy* object_proxy,
+                     GDBusProxy* interface_proxy,
+                     GVariant* changed_properties,
+                     const gchar* const* invalidated_properties,
+                     gpointer user_data) {
+        auto* plugin = static_cast<OmniBlePlugin*>(user_data);
+        const gchar* interface_name =
+            g_dbus_proxy_get_interface_name(interface_proxy);
+        if (g_strcmp0(interface_name, kAdapterInterface) == 0) {
+          emit_adapter_state(
+              plugin,
+              proxy_property_bool(interface_proxy, "Powered", FALSE)
+                  ? "poweredOn"
+                  : "poweredOff");
+          return;
+        }
+
+        if (g_strcmp0(interface_name, kDeviceInterface) != 0 ||
+            !plugin->is_scanning) {
+          return;
+        }
+
+        if (!device_matches_filters(plugin, interface_proxy)) {
+          return;
+        }
+
+        gchar* address = proxy_property_string_dup(interface_proxy, "Address");
+        if (address == nullptr) {
+          return;
+        }
+
+        const gboolean seen =
+            g_hash_table_contains(plugin->seen_devices, address);
+        if (!plugin->allow_duplicates && seen) {
+          g_free(address);
+          return;
+        }
+
+        if (!seen) {
+          g_hash_table_add(plugin->seen_devices, address);
+        } else {
+          g_free(address);
+        }
+
+        g_autoptr(FlValue) event = fl_value_new_map();
+        fl_value_set_string_take(event, "type", fl_value_new_string("scanResult"));
+        fl_value_set_string_take(event, "result",
+                                 build_scan_result_from_proxy(interface_proxy));
+        send_event(plugin, event);
+      }),
+      self);
+
+  return TRUE;
+}
+
+static GDBusProxy* adapter_proxy(OmniBlePlugin* self) {
+  if (self->object_manager == nullptr) {
+    return nullptr;
+  }
+
+  GList* objects = g_dbus_object_manager_get_objects(self->object_manager);
+  GDBusProxy* proxy = nullptr;
+  for (GList* element = objects; element != nullptr; element = element->next) {
+    GDBusObject* object = G_DBUS_OBJECT(element->data);
+    g_autoptr(GDBusInterface) interface_ =
+        g_dbus_object_get_interface(object, kAdapterInterface);
+    if (interface_ != nullptr) {
+      proxy = G_DBUS_PROXY(g_object_ref(interface_));
+      break;
+    }
+  }
+
+  g_list_free_full(objects, g_object_unref);
+
+  return proxy;
+}
+
+static const gchar* current_adapter_state(OmniBlePlugin* self) {
+  g_autoptr(GDBusProxy) proxy = adapter_proxy(self);
+  if (proxy == nullptr) {
+    return "unavailable";
+  }
+
+  return proxy_property_bool(proxy, "Powered", FALSE) ? "poweredOn"
+                                                       : "poweredOff";
+}
+
+static void emit_existing_devices(OmniBlePlugin* self) {
+  if (self->object_manager == nullptr || !self->is_scanning) {
+    return;
+  }
+
+  GList* objects = g_dbus_object_manager_get_objects(self->object_manager);
+  for (GList* element = objects; element != nullptr; element = element->next) {
+    GDBusObject* object = G_DBUS_OBJECT(element->data);
+    g_autoptr(GDBusInterface) interface_ =
+        g_dbus_object_get_interface(object, kDeviceInterface);
+    if (interface_ == nullptr) {
+      continue;
+    }
+
+    GDBusProxy* proxy = G_DBUS_PROXY(interface_);
+    if (!device_matches_filters(self, proxy)) {
+      continue;
+    }
+
+    gchar* address = proxy_property_string_dup(proxy, "Address");
+    if (address == nullptr) {
+      continue;
+    }
+
+    const gboolean seen = g_hash_table_contains(self->seen_devices, address);
+    if (!self->allow_duplicates && seen) {
+      g_free(address);
+      continue;
+    }
+    if (!seen) {
+      g_hash_table_add(self->seen_devices, address);
+    } else {
+      g_free(address);
+    }
+
+    g_autoptr(FlValue) event = fl_value_new_map();
+    fl_value_set_string_take(event, "type", fl_value_new_string("scanResult"));
+    fl_value_set_string_take(event, "result", build_scan_result_from_proxy(proxy));
+    send_event(self, event);
+  }
+
+  g_list_free_full(objects, g_object_unref);
+}
 
 static FlMethodResponse* permission_status_response(FlValue* arguments) {
   g_autoptr(FlValue) permissions = fl_value_new_map();
@@ -42,13 +520,131 @@ static FlMethodResponse* permission_status_response(FlValue* arguments) {
   g_autoptr(FlValue) result = fl_value_new_map();
   fl_value_set_string_take(result, "permissions", fl_value_ref(permissions));
   fl_value_set_string_take(result, "allGranted", fl_value_new_bool(TRUE));
-  return FL_METHOD_RESPONSE(fl_method_success_response_new(result));
+  return success_response(result);
+}
+
+static FlMethodResponse* start_scan(OmniBlePlugin* self, FlValue* arguments) {
+  g_autoptr(GError) error = nullptr;
+  if (!ensure_object_manager(self, &error)) {
+    return error_response("unavailable",
+                          error != nullptr ? error->message
+                                           : "BlueZ is unavailable.");
+  }
+
+  g_autoptr(GDBusProxy) proxy = adapter_proxy(self);
+  if (proxy == nullptr) {
+    return error_response("adapter-unavailable",
+                          "Bluetooth adapter must be available before scanning.");
+  }
+
+  if (!proxy_property_bool(proxy, "Powered", FALSE)) {
+    g_autoptr(FlValue) details = fl_value_new_map();
+    fl_value_set_string_take(details, "state",
+                             fl_value_new_string("poweredOff"));
+    return error_response("adapter-unavailable",
+                          "Bluetooth adapter must be powered on before scanning.",
+                          details);
+  }
+
+  clear_service_filters(self);
+  clear_seen_devices(self);
+  self->allow_duplicates = FALSE;
+
+  if (arguments != nullptr && fl_value_get_type(arguments) == FL_VALUE_TYPE_MAP) {
+    FlValue* allow_duplicates = fl_value_lookup_string(arguments, "allowDuplicates");
+    if (allow_duplicates != nullptr &&
+        fl_value_get_type(allow_duplicates) == FL_VALUE_TYPE_BOOL) {
+      self->allow_duplicates = fl_value_get_bool(allow_duplicates);
+    }
+
+    FlValue* service_uuids = fl_value_lookup_string(arguments, "serviceUuids");
+    if (service_uuids != nullptr &&
+        fl_value_get_type(service_uuids) == FL_VALUE_TYPE_LIST) {
+      const size_t uuid_count = fl_value_get_length(service_uuids);
+      for (size_t index = 0; index < uuid_count; index++) {
+        FlValue* uuid_value = fl_value_get_list_value(service_uuids, index);
+        if (fl_value_get_type(uuid_value) != FL_VALUE_TYPE_STRING) {
+          continue;
+        }
+        const std::string normalized =
+            normalize_uuid(fl_value_get_string(uuid_value));
+        g_ptr_array_add(self->service_filters, g_strdup(normalized.c_str()));
+      }
+    }
+  }
+
+  GVariantBuilder filter_builder;
+  g_variant_builder_init(&filter_builder, G_VARIANT_TYPE("a{sv}"));
+  g_variant_builder_add(&filter_builder, "{sv}", "Transport",
+                        g_variant_new_string("le"));
+  g_variant_builder_add(&filter_builder, "{sv}", "DuplicateData",
+                        g_variant_new_boolean(self->allow_duplicates));
+
+  if (self->service_filters->len > 0) {
+    GVariantBuilder uuid_builder;
+    g_variant_builder_init(&uuid_builder, G_VARIANT_TYPE("as"));
+    for (guint index = 0; index < self->service_filters->len; index++) {
+      g_variant_builder_add(
+          &uuid_builder, "s",
+          static_cast<const gchar*>(g_ptr_array_index(self->service_filters,
+                                                      index)));
+    }
+    g_variant_builder_add(&filter_builder, "{sv}", "UUIDs",
+                          g_variant_builder_end(&uuid_builder));
+  }
+
+  g_autoptr(GVariant) filter = g_variant_builder_end(&filter_builder);
+  g_autoptr(GVariant) set_filter_params = g_variant_new_tuple(&filter, 1);
+  if (g_dbus_proxy_call_sync(proxy, "SetDiscoveryFilter", set_filter_params,
+                             G_DBUS_CALL_FLAGS_NONE, -1, nullptr, &error) ==
+      nullptr) {
+    return error_response("scan-failed",
+                          error != nullptr ? error->message
+                                           : "Failed to configure discovery filter.");
+  }
+
+  g_clear_error(&error);
+  if (g_dbus_proxy_call_sync(proxy, "StartDiscovery", g_variant_new("()"),
+                             G_DBUS_CALL_FLAGS_NONE, -1, nullptr, &error) ==
+      nullptr) {
+    return error_response("scan-failed",
+                          error != nullptr ? error->message
+                                           : "Failed to start discovery.");
+  }
+
+  self->is_scanning = TRUE;
+  emit_adapter_state(self, current_adapter_state(self));
+  emit_existing_devices(self);
+  return success_response();
+}
+
+static FlMethodResponse* stop_scan(OmniBlePlugin* self) {
+  self->is_scanning = FALSE;
+
+  if (self->object_manager == nullptr) {
+    return success_response();
+  }
+
+  g_autoptr(GDBusProxy) proxy = adapter_proxy(self);
+  if (proxy == nullptr) {
+    return success_response();
+  }
+
+  g_autoptr(GError) error = nullptr;
+  if (g_dbus_proxy_call_sync(proxy, "StopDiscovery", g_variant_new("()"),
+                             G_DBUS_CALL_FLAGS_NONE, -1, nullptr, &error) ==
+      nullptr) {
+    return error_response("scan-failed",
+                          error != nullptr ? error->message
+                                           : "Failed to stop discovery.");
+  }
+
+  return success_response();
 }
 
 // Called when a method call is received from Flutter.
-static void omni_ble_plugin_handle_method_call(
-    OmniBlePlugin* self,
-    FlMethodCall* method_call) {
+static void omni_ble_plugin_handle_method_call(OmniBlePlugin* self,
+                                               FlMethodCall* method_call) {
   g_autoptr(FlMethodResponse) response = nullptr;
 
   const gchar* method = fl_method_call_get_name(method_call);
@@ -58,6 +654,10 @@ static void omni_ble_plugin_handle_method_call(
   } else if (strcmp(method, "checkPermissions") == 0 ||
              strcmp(method, "requestPermissions") == 0) {
     response = permission_status_response(fl_method_call_get_args(method_call));
+  } else if (strcmp(method, "startScan") == 0) {
+    response = start_scan(self, fl_method_call_get_args(method_call));
+  } else if (strcmp(method, "stopScan") == 0) {
+    response = stop_scan(self);
   } else {
     response = FL_METHOD_RESPONSE(fl_method_not_implemented_response_new());
   }
@@ -69,15 +669,83 @@ FlMethodResponse* get_capabilities() {
   struct utsname uname_data = {};
   uname(&uname_data);
 
+  g_autoptr(FlValue) features = fl_value_new_list();
+  fl_value_append_take(features, fl_value_new_string("central"));
+  fl_value_append_take(features, fl_value_new_string("scanning"));
+
+  g_autoptr(FlValue) metadata = fl_value_new_map();
+  fl_value_set_string_take(metadata, "adapterState",
+                           fl_value_new_string("unknown"));
+
   g_autoptr(FlValue) result = fl_value_new_map();
   fl_value_set_string_take(result, "platform", fl_value_new_string("linux"));
   fl_value_set_string_take(result, "platformVersion",
                            fl_value_new_string(uname_data.version));
-  fl_value_set_string_take(result, "availableFeatures", fl_value_new_list());
-  return FL_METHOD_RESPONSE(fl_method_success_response_new(result));
+  fl_value_set_string_take(result, "availableFeatures", fl_value_ref(features));
+  fl_value_set_string_take(result, "metadata", fl_value_ref(metadata));
+  return success_response(result);
+}
+
+static FlMethodErrorResponse* event_listen_cb(FlEventChannel* channel,
+                                              FlValue* args,
+                                              gpointer user_data) {
+  auto* self = OMNI_BLE_PLUGIN(user_data);
+  self->event_listening = TRUE;
+
+  g_autoptr(GError) error = nullptr;
+  if (ensure_object_manager(self, &error)) {
+    emit_adapter_state(self, current_adapter_state(self));
+    if (self->is_scanning) {
+      emit_existing_devices(self);
+    }
+    return nullptr;
+  }
+
+  emit_adapter_state(self, "unavailable");
+  return nullptr;
+}
+
+static FlMethodErrorResponse* event_cancel_cb(FlEventChannel* channel,
+                                              FlValue* args,
+                                              gpointer user_data) {
+  auto* self = OMNI_BLE_PLUGIN(user_data);
+  self->event_listening = FALSE;
+  return nullptr;
 }
 
 static void omni_ble_plugin_dispose(GObject* object) {
+  OmniBlePlugin* self = OMNI_BLE_PLUGIN(object);
+
+  if (self->event_channel != nullptr) {
+    g_object_unref(self->event_channel);
+    self->event_channel = nullptr;
+  }
+
+  if (self->object_manager != nullptr) {
+    if (self->object_added_handler_id != 0) {
+      g_signal_handler_disconnect(self->object_manager,
+                                  self->object_added_handler_id);
+      self->object_added_handler_id = 0;
+    }
+    if (self->properties_changed_handler_id != 0) {
+      g_signal_handler_disconnect(self->object_manager,
+                                  self->properties_changed_handler_id);
+      self->properties_changed_handler_id = 0;
+    }
+    g_object_unref(self->object_manager);
+    self->object_manager = nullptr;
+  }
+
+  if (self->service_filters != nullptr) {
+    g_ptr_array_unref(self->service_filters);
+    self->service_filters = nullptr;
+  }
+
+  if (self->seen_devices != nullptr) {
+    g_hash_table_unref(self->seen_devices);
+    self->seen_devices = nullptr;
+  }
+
   G_OBJECT_CLASS(omni_ble_plugin_parent_class)->dispose(object);
 }
 
@@ -85,9 +753,15 @@ static void omni_ble_plugin_class_init(OmniBlePluginClass* klass) {
   G_OBJECT_CLASS(klass)->dispose = omni_ble_plugin_dispose;
 }
 
-static void omni_ble_plugin_init(OmniBlePlugin* self) {}
+static void omni_ble_plugin_init(OmniBlePlugin* self) {
+  self->allow_duplicates = FALSE;
+  self->service_filters = g_ptr_array_new_with_free_func(g_free);
+  self->seen_devices =
+      g_hash_table_new_full(g_str_hash, g_str_equal, g_free, nullptr);
+}
 
-static void method_call_cb(FlMethodChannel* channel, FlMethodCall* method_call,
+static void method_call_cb(FlMethodChannel* channel,
+                           FlMethodCall* method_call,
                            gpointer user_data) {
   OmniBlePlugin* plugin = OMNI_BLE_PLUGIN(user_data);
   omni_ble_plugin_handle_method_call(plugin, method_call);
@@ -98,13 +772,19 @@ void omni_ble_plugin_register_with_registrar(FlPluginRegistrar* registrar) {
       g_object_new(omni_ble_plugin_get_type(), nullptr));
 
   g_autoptr(FlStandardMethodCodec) codec = fl_standard_method_codec_new();
-  g_autoptr(FlMethodChannel) channel =
+  g_autoptr(FlMethodChannel) method_channel =
       fl_method_channel_new(fl_plugin_registrar_get_messenger(registrar),
-                            "omni_ble/methods",
-                            FL_METHOD_CODEC(codec));
-  fl_method_channel_set_method_call_handler(channel, method_call_cb,
+                            "omni_ble/methods", FL_METHOD_CODEC(codec));
+  fl_method_channel_set_method_call_handler(method_channel, method_call_cb,
                                             g_object_ref(plugin),
                                             g_object_unref);
+
+  plugin->event_channel = fl_event_channel_new(
+      fl_plugin_registrar_get_messenger(registrar), "omni_ble/events",
+      FL_METHOD_CODEC(codec));
+  fl_event_channel_set_stream_handlers(plugin->event_channel, event_listen_cb,
+                                       event_cancel_cb, g_object_ref(plugin),
+                                       g_object_unref);
 
   g_object_unref(plugin);
 }
