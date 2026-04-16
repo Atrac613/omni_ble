@@ -37,13 +37,31 @@ using BluetoothLEAdvertisementReceivedEventArgs = winrt::Windows::Devices::Bluet
 using BluetoothLEAdvertisementWatcher = winrt::Windows::Devices::Bluetooth::Advertisement::BluetoothLEAdvertisementWatcher;
 using BluetoothLEAdvertisementWatcherStoppedEventArgs = winrt::Windows::Devices::Bluetooth::Advertisement::BluetoothLEAdvertisementWatcherStoppedEventArgs;
 using BluetoothLEScanningMode = winrt::Windows::Devices::Bluetooth::Advertisement::BluetoothLEScanningMode;
+using GattClientCharacteristicConfigurationDescriptorValue =
+    winrt::Windows::Devices::Bluetooth::GenericAttributeProfile::
+        GattClientCharacteristicConfigurationDescriptorValue;
 using GattCharacteristicProperties = winrt::Windows::Devices::Bluetooth::GenericAttributeProfile::GattCharacteristicProperties;
 using GattCommunicationStatus = winrt::Windows::Devices::Bluetooth::GenericAttributeProfile::GattCommunicationStatus;
 using GattDescriptor = winrt::Windows::Devices::Bluetooth::GenericAttributeProfile::GattDescriptor;
+using GattWriteOption = winrt::Windows::Devices::Bluetooth::GenericAttributeProfile::GattWriteOption;
 using Radio = winrt::Windows::Devices::Radios::Radio;
 using RadioState = winrt::Windows::Devices::Radios::RadioState;
 using DataReader = winrt::Windows::Storage::Streams::DataReader;
+using DataWriter = winrt::Windows::Storage::Streams::DataWriter;
 using IBuffer = winrt::Windows::Storage::Streams::IBuffer;
+
+struct ParsedCharacteristicAddress {
+  std::string device_id;
+  std::string service_uuid;
+  std::string characteristic_uuid;
+};
+
+struct ParsedDescriptorAddress {
+  std::string device_id;
+  std::string service_uuid;
+  std::string characteristic_uuid;
+  std::string descriptor_uuid;
+};
 
 std::vector<uint8_t> BufferToBytes(const IBuffer& buffer) {
   std::vector<uint8_t> bytes;
@@ -59,6 +77,20 @@ std::vector<uint8_t> BufferToBytes(const IBuffer& buffer) {
   auto reader = DataReader::FromBuffer(buffer);
   reader.ReadBytes(bytes);
   return bytes;
+}
+
+flutter::EncodableList BytesToEncodableList(const std::vector<uint8_t>& bytes) {
+  flutter::EncodableList list;
+  for (const auto byte : bytes) {
+    list.emplace_back(static_cast<int>(byte));
+  }
+  return list;
+}
+
+IBuffer BytesToBuffer(const std::vector<uint8_t>& bytes) {
+  DataWriter writer;
+  writer.WriteBytes(bytes);
+  return writer.DetachBuffer();
 }
 
 std::optional<Radio> TryGetBluetoothRadio() {
@@ -101,6 +133,97 @@ std::optional<std::string> GetStringArgument(
     return std::nullopt;
   }
   return std::get<std::string>(iterator->second);
+}
+
+std::optional<std::vector<uint8_t>> GetByteArgument(
+    const flutter::EncodableValue* arguments,
+    const char* key) {
+  const auto* map = ArgumentMap(arguments);
+  if (map == nullptr) {
+    return std::nullopt;
+  }
+  const auto iterator = map->find(flutter::EncodableValue(key));
+  if (iterator == map->end()) {
+    return std::nullopt;
+  }
+  if (std::holds_alternative<std::vector<uint8_t>>(iterator->second)) {
+    return std::get<std::vector<uint8_t>>(iterator->second);
+  }
+  if (std::holds_alternative<flutter::EncodableList>(iterator->second)) {
+    std::vector<uint8_t> bytes;
+    for (const auto& value :
+         std::get<flutter::EncodableList>(iterator->second)) {
+      if (std::holds_alternative<int32_t>(value)) {
+        bytes.push_back(static_cast<uint8_t>(std::get<int32_t>(value)));
+      } else if (std::holds_alternative<int64_t>(value)) {
+        bytes.push_back(static_cast<uint8_t>(std::get<int64_t>(value)));
+      }
+    }
+    return bytes;
+  }
+  return std::nullopt;
+}
+
+std::optional<bool> GetBoolArgument(const flutter::EncodableValue* arguments,
+                                    const char* key) {
+  const auto* map = ArgumentMap(arguments);
+  if (map == nullptr) {
+    return std::nullopt;
+  }
+  const auto iterator = map->find(flutter::EncodableValue(key));
+  if (iterator == map->end() || !std::holds_alternative<bool>(iterator->second)) {
+    return std::nullopt;
+  }
+  return std::get<bool>(iterator->second);
+}
+
+std::string NormalizeUuidValue(const std::string& uuid) {
+  std::string normalized = uuid;
+  std::transform(normalized.begin(), normalized.end(), normalized.begin(),
+                 [](unsigned char ch) {
+                   return static_cast<char>(std::tolower(ch));
+                 });
+  if (normalized.size() == 4) {
+    return "0000" + normalized + "-0000-1000-8000-00805f9b34fb";
+  }
+  if (normalized.size() == 8) {
+    return normalized + "-0000-1000-8000-00805f9b34fb";
+  }
+  return normalized;
+}
+
+ParsedCharacteristicAddress ParseCharacteristicAddress(
+    const flutter::EncodableValue* arguments) {
+  ParsedCharacteristicAddress address;
+  address.device_id = GetStringArgument(arguments, "deviceId").value_or("");
+  address.service_uuid =
+      NormalizeUuidValue(GetStringArgument(arguments, "serviceUuid").value_or(""));
+  address.characteristic_uuid = NormalizeUuidValue(
+      GetStringArgument(arguments, "characteristicUuid").value_or(""));
+  return address;
+}
+
+ParsedDescriptorAddress ParseDescriptorAddress(
+    const flutter::EncodableValue* arguments) {
+  ParsedDescriptorAddress address;
+  address.device_id = GetStringArgument(arguments, "deviceId").value_or("");
+  address.service_uuid =
+      NormalizeUuidValue(GetStringArgument(arguments, "serviceUuid").value_or(""));
+  address.characteristic_uuid = NormalizeUuidValue(
+      GetStringArgument(arguments, "characteristicUuid").value_or(""));
+  address.descriptor_uuid = NormalizeUuidValue(
+      GetStringArgument(arguments, "descriptorUuid").value_or(""));
+  return address;
+}
+
+bool IsValidCharacteristicAddress(const ParsedCharacteristicAddress& address) {
+  return !address.device_id.empty() && !address.service_uuid.empty() &&
+         !address.characteristic_uuid.empty();
+}
+
+bool IsValidDescriptorAddress(const ParsedDescriptorAddress& address) {
+  return !address.device_id.empty() && !address.service_uuid.empty() &&
+         !address.characteristic_uuid.empty() && !address.descriptor_uuid.empty();
 }
 
 std::string GattStatusErrorCode(const GattCommunicationStatus status) {
@@ -400,6 +523,29 @@ void OmniBlePlugin::EmitConnectionState(const std::string& device_id,
   event[flutter::EncodableValue("deviceId")] =
       flutter::EncodableValue(device_id);
   event[flutter::EncodableValue("state")] = flutter::EncodableValue(state);
+  event_sink_->Success(flutter::EncodableValue(event));
+}
+
+void OmniBlePlugin::EmitCharacteristicValueChanged(
+    const std::string& device_id,
+    const std::string& service_uuid,
+    const std::string& characteristic_uuid,
+    const std::vector<uint8_t>& value) {
+  if (!event_sink_) {
+    return;
+  }
+
+  flutter::EncodableMap event;
+  event[flutter::EncodableValue("type")] =
+      flutter::EncodableValue("characteristicValueChanged");
+  event[flutter::EncodableValue("deviceId")] =
+      flutter::EncodableValue(device_id);
+  event[flutter::EncodableValue("serviceUuid")] =
+      flutter::EncodableValue(service_uuid);
+  event[flutter::EncodableValue("characteristicUuid")] =
+      flutter::EncodableValue(characteristic_uuid);
+  event[flutter::EncodableValue("value")] =
+      flutter::EncodableValue(BytesToEncodableList(value));
   event_sink_->Success(flutter::EncodableValue(event));
 }
 
@@ -734,6 +880,339 @@ void OmniBlePlugin::DiscoverServices(
   result->Success(flutter::EncodableValue(ServicesPayload(*connection)));
 }
 
+void OmniBlePlugin::ReadCharacteristic(
+    const flutter::EncodableValue* arguments,
+    std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>> result) {
+  const auto address = ParseCharacteristicAddress(arguments);
+  if (!IsValidCharacteristicAddress(address)) {
+    result->Error(
+        "invalid-argument",
+        "`deviceId`, `serviceUuid`, and `characteristicUuid` are required to read a characteristic.");
+    return;
+  }
+
+  auto* connection = FindConnectedConnection(address.device_id);
+  if (connection == nullptr) {
+    result->Error(
+        "not-connected",
+        "Bluetooth device must be connected before reading a characteristic.");
+    return;
+  }
+
+  auto* characteristic =
+      FindCharacteristic(connection, address.service_uuid,
+                         address.characteristic_uuid);
+  if (characteristic == nullptr) {
+    result->Error(
+        "unavailable",
+        "Bluetooth characteristic was not found. Call discoverServices() before reading.");
+    return;
+  }
+
+  const auto properties =
+      characteristic->characteristic.CharacteristicProperties();
+  if ((properties & GattCharacteristicProperties::Read) ==
+      GattCharacteristicProperties::None) {
+    result->Error("unsupported",
+                  "Bluetooth characteristic does not support reading.");
+    return;
+  }
+
+  try {
+    const auto read_result =
+        characteristic->characteristic
+            .ReadValueAsync(BluetoothCacheMode::Uncached)
+            .get();
+    if (read_result.Status() != GattCommunicationStatus::Success) {
+      result->Error(
+          GattStatusErrorCode(read_result.Status()).empty()
+              ? "read-failed"
+              : GattStatusErrorCode(read_result.Status()),
+          GattStatusMessage("read the characteristic", read_result.Status()));
+      return;
+    }
+
+    result->Success(
+        flutter::EncodableValue(BytesToEncodableList(BufferToBytes(
+            read_result.Value()))));
+  } catch (const winrt::hresult_error& error) {
+    result->Error("read-failed", winrt::to_string(error.message()));
+  }
+}
+
+void OmniBlePlugin::ReadDescriptor(
+    const flutter::EncodableValue* arguments,
+    std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>> result) {
+  const auto address = ParseDescriptorAddress(arguments);
+  if (!IsValidDescriptorAddress(address)) {
+    result->Error(
+        "invalid-argument",
+        "`deviceId`, `serviceUuid`, `characteristicUuid`, and `descriptorUuid` are required to read a descriptor.");
+    return;
+  }
+
+  auto* connection = FindConnectedConnection(address.device_id);
+  if (connection == nullptr) {
+    result->Error(
+        "not-connected",
+        "Bluetooth device must be connected before reading a descriptor.");
+    return;
+  }
+
+  auto* descriptor = FindDescriptor(connection, address.service_uuid,
+                                    address.characteristic_uuid,
+                                    address.descriptor_uuid);
+  if (descriptor == nullptr) {
+    result->Error(
+        "unavailable",
+        "Bluetooth descriptor was not found. Call discoverServices() before reading.");
+    return;
+  }
+
+  try {
+    const auto read_result =
+        descriptor->ReadValueAsync(BluetoothCacheMode::Uncached).get();
+    if (read_result.Status() != GattCommunicationStatus::Success) {
+      result->Error(
+          GattStatusErrorCode(read_result.Status()).empty()
+              ? "read-failed"
+              : GattStatusErrorCode(read_result.Status()),
+          GattStatusMessage("read the descriptor", read_result.Status()));
+      return;
+    }
+
+    result->Success(
+        flutter::EncodableValue(BytesToEncodableList(BufferToBytes(
+            read_result.Value()))));
+  } catch (const winrt::hresult_error& error) {
+    result->Error("read-failed", winrt::to_string(error.message()));
+  }
+}
+
+void OmniBlePlugin::WriteCharacteristic(
+    const flutter::EncodableValue* arguments,
+    std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>> result) {
+  const auto address = ParseCharacteristicAddress(arguments);
+  const auto value = GetByteArgument(arguments, "value");
+  if (!IsValidCharacteristicAddress(address) || !value.has_value()) {
+    result->Error(
+        "invalid-argument",
+        "`deviceId`, `serviceUuid`, `characteristicUuid`, and `value` are required to write a characteristic.");
+    return;
+  }
+
+  auto* connection = FindConnectedConnection(address.device_id);
+  if (connection == nullptr) {
+    result->Error(
+        "not-connected",
+        "Bluetooth device must be connected before writing a characteristic.");
+    return;
+  }
+
+  auto* characteristic =
+      FindCharacteristic(connection, address.service_uuid,
+                         address.characteristic_uuid);
+  if (characteristic == nullptr) {
+    result->Error(
+        "unavailable",
+        "Bluetooth characteristic was not found. Call discoverServices() before writing.");
+    return;
+  }
+
+  const auto write_type =
+      GetStringArgument(arguments, "writeType").value_or("withResponse");
+  const auto properties =
+      characteristic->characteristic.CharacteristicProperties();
+  auto write_option = GattWriteOption::WriteWithResponse;
+  if (write_type == "withoutResponse") {
+    write_option = GattWriteOption::WriteWithoutResponse;
+    if ((properties & GattCharacteristicProperties::WriteWithoutResponse) ==
+        GattCharacteristicProperties::None) {
+      result->Error(
+          "unsupported",
+          "Bluetooth characteristic does not support write without response.");
+      return;
+    }
+  } else if ((properties & GattCharacteristicProperties::Write) ==
+             GattCharacteristicProperties::None) {
+    result->Error("unsupported",
+                  "Bluetooth characteristic does not support writing.");
+    return;
+  }
+
+  try {
+    const auto status = characteristic->characteristic
+                            .WriteValueAsync(BytesToBuffer(*value), write_option)
+                            .get();
+    if (status != GattCommunicationStatus::Success) {
+      result->Error(
+          GattStatusErrorCode(status).empty() ? "write-failed"
+                                              : GattStatusErrorCode(status),
+          GattStatusMessage("write the characteristic", status));
+      return;
+    }
+
+    result->Success();
+  } catch (const winrt::hresult_error& error) {
+    result->Error("write-failed", winrt::to_string(error.message()));
+  }
+}
+
+void OmniBlePlugin::WriteDescriptor(
+    const flutter::EncodableValue* arguments,
+    std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>> result) {
+  const auto address = ParseDescriptorAddress(arguments);
+  const auto value = GetByteArgument(arguments, "value");
+  if (!IsValidDescriptorAddress(address) || !value.has_value()) {
+    result->Error(
+        "invalid-argument",
+        "`deviceId`, `serviceUuid`, `characteristicUuid`, `descriptorUuid`, and `value` are required to write a descriptor.");
+    return;
+  }
+
+  if (address.descriptor_uuid == "00002902-0000-1000-8000-00805f9b34fb") {
+    result->Error(
+        "unsupported",
+        "Use setNotification() to update the client characteristic configuration descriptor.");
+    return;
+  }
+
+  auto* connection = FindConnectedConnection(address.device_id);
+  if (connection == nullptr) {
+    result->Error(
+        "not-connected",
+        "Bluetooth device must be connected before writing a descriptor.");
+    return;
+  }
+
+  auto* descriptor = FindDescriptor(connection, address.service_uuid,
+                                    address.characteristic_uuid,
+                                    address.descriptor_uuid);
+  if (descriptor == nullptr) {
+    result->Error(
+        "unavailable",
+        "Bluetooth descriptor was not found. Call discoverServices() before writing.");
+    return;
+  }
+
+  try {
+    const auto status =
+        descriptor->WriteValueAsync(BytesToBuffer(*value)).get();
+    if (status != GattCommunicationStatus::Success) {
+      result->Error(
+          GattStatusErrorCode(status).empty() ? "write-failed"
+                                              : GattStatusErrorCode(status),
+          GattStatusMessage("write the descriptor", status));
+      return;
+    }
+
+    result->Success();
+  } catch (const winrt::hresult_error& error) {
+    result->Error("write-failed", winrt::to_string(error.message()));
+  }
+}
+
+void OmniBlePlugin::SetNotification(
+    const flutter::EncodableValue* arguments,
+    std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>> result) {
+  const auto address = ParseCharacteristicAddress(arguments);
+  if (!IsValidCharacteristicAddress(address) ||
+      !GetBoolArgument(arguments, "enabled").has_value()) {
+    result->Error(
+        "invalid-argument",
+        "`deviceId`, `serviceUuid`, `characteristicUuid`, and `enabled` are required to update notifications.");
+    return;
+  }
+
+  auto* connection = FindConnectedConnection(address.device_id);
+  if (connection == nullptr) {
+    result->Error(
+        "not-connected",
+        "Bluetooth device must be connected before updating notifications.");
+    return;
+  }
+
+  auto* characteristic =
+      FindCharacteristic(connection, address.service_uuid,
+                         address.characteristic_uuid);
+  if (characteristic == nullptr) {
+    result->Error(
+        "unavailable",
+        "Bluetooth characteristic was not found. Call discoverServices() before enabling notifications.");
+    return;
+  }
+
+  const auto enabled = GetBoolArgument(arguments, "enabled").value_or(false);
+  const auto properties =
+      characteristic->characteristic.CharacteristicProperties();
+  const auto supports_notify =
+      (properties & GattCharacteristicProperties::Notify) !=
+      GattCharacteristicProperties::None;
+  const auto supports_indicate =
+      (properties & GattCharacteristicProperties::Indicate) !=
+      GattCharacteristicProperties::None;
+  if (enabled && !supports_notify && !supports_indicate) {
+    result->Error(
+        "unsupported",
+        "Bluetooth characteristic does not support notifications or indications.");
+    return;
+  }
+
+  auto descriptor_value =
+      GattClientCharacteristicConfigurationDescriptorValue::None;
+  if (enabled) {
+    descriptor_value = supports_notify
+                           ? GattClientCharacteristicConfigurationDescriptorValue::Notify
+                           : GattClientCharacteristicConfigurationDescriptorValue::Indicate;
+  }
+
+  try {
+    const auto status =
+        characteristic->characteristic
+            .WriteClientCharacteristicConfigurationDescriptorAsync(
+                descriptor_value)
+            .get();
+    if (status != GattCommunicationStatus::Success) {
+      result->Error(
+          GattStatusErrorCode(status).empty() ? "set-notification-failed"
+                                              : GattStatusErrorCode(status),
+          GattStatusMessage("update notifications", status));
+      return;
+    }
+
+    if (!enabled) {
+      if (characteristic->value_changed_active) {
+        try {
+          characteristic->characteristic.ValueChanged(
+              characteristic->value_changed_token_);
+        } catch (...) {
+        }
+        characteristic->value_changed_active = false;
+      }
+      result->Success();
+      return;
+    }
+
+    if (!characteristic->value_changed_active) {
+      characteristic->value_changed_token_ =
+          characteristic->characteristic.ValueChanged(
+              [this, device_id = address.device_id,
+               service_uuid = address.service_uuid,
+               characteristic_uuid = address.characteristic_uuid](
+                  const auto& sender, const auto& args) {
+                EmitCharacteristicValueChanged(
+                    device_id, service_uuid, characteristic_uuid,
+                    BufferToBytes(args.CharacteristicValue()));
+              });
+      characteristic->value_changed_active = true;
+    }
+
+    result->Success();
+  } catch (const winrt::hresult_error& error) {
+    result->Error("set-notification-failed", winrt::to_string(error.message()));
+  }
+}
+
 void OmniBlePlugin::HandleConnectionStatusChanged(
     const BluetoothLEDevice& device) {
   try {
@@ -771,6 +1250,49 @@ ConnectionContext* OmniBlePlugin::FindConnectedConnection(
   return connection;
 }
 
+CachedGattCharacteristic* OmniBlePlugin::FindCharacteristic(
+    ConnectionContext* connection,
+    const std::string& service_uuid,
+    const std::string& characteristic_uuid) {
+  if (connection == nullptr) {
+    return nullptr;
+  }
+
+  const auto service_iterator = connection->services.find(service_uuid);
+  if (service_iterator == connection->services.end()) {
+    return nullptr;
+  }
+
+  const auto characteristic_iterator =
+      service_iterator->second.characteristics.find(characteristic_uuid);
+  if (characteristic_iterator ==
+      service_iterator->second.characteristics.end()) {
+    return nullptr;
+  }
+
+  return &characteristic_iterator->second;
+}
+
+GattDescriptor* OmniBlePlugin::FindDescriptor(
+    ConnectionContext* connection,
+    const std::string& service_uuid,
+    const std::string& characteristic_uuid,
+    const std::string& descriptor_uuid) {
+  auto* characteristic =
+      FindCharacteristic(connection, service_uuid, characteristic_uuid);
+  if (characteristic == nullptr) {
+    return nullptr;
+  }
+
+  const auto descriptor_iterator =
+      characteristic->descriptors.find(descriptor_uuid);
+  if (descriptor_iterator == characteristic->descriptors.end()) {
+    return nullptr;
+  }
+
+  return &descriptor_iterator->second;
+}
+
 bool OmniBlePlugin::RefreshGattCache(ConnectionContext* connection,
                                      std::string& error_code,
                                      std::string& error_message) {
@@ -781,6 +1303,24 @@ bool OmniBlePlugin::RefreshGattCache(ConnectionContext* connection,
     return false;
   }
 
+  for (auto& service_entry : connection->services) {
+    for (auto& characteristic_entry : service_entry.second.characteristics) {
+      if (characteristic_entry.second.value_changed_active) {
+        try {
+          characteristic_entry.second.characteristic.ValueChanged(
+              characteristic_entry.second.value_changed_token_);
+        } catch (...) {
+        }
+        characteristic_entry.second.value_changed_active = false;
+      }
+    }
+    if (service_entry.second.service) {
+      try {
+        service_entry.second.service.Close();
+      } catch (...) {
+      }
+    }
+  }
   connection->services.clear();
 
   try {
@@ -852,6 +1392,16 @@ void OmniBlePlugin::ClearConnection(const std::string& device_id) {
 
   auto& connection = iterator->second;
   for (auto& service_entry : connection.services) {
+    for (auto& characteristic_entry : service_entry.second.characteristics) {
+      if (characteristic_entry.second.value_changed_active) {
+        try {
+          characteristic_entry.second.characteristic.ValueChanged(
+              characteristic_entry.second.value_changed_token_);
+        } catch (...) {
+        }
+        characteristic_entry.second.value_changed_active = false;
+      }
+    }
     if (service_entry.second.service) {
       try {
         service_entry.second.service.Close();
@@ -1037,6 +1587,16 @@ void OmniBlePlugin::HandleMethodCall(
     Disconnect(method_call.arguments(), std::move(result));
   } else if (method_call.method_name().compare("discoverServices") == 0) {
     DiscoverServices(method_call.arguments(), std::move(result));
+  } else if (method_call.method_name().compare("readCharacteristic") == 0) {
+    ReadCharacteristic(method_call.arguments(), std::move(result));
+  } else if (method_call.method_name().compare("readDescriptor") == 0) {
+    ReadDescriptor(method_call.arguments(), std::move(result));
+  } else if (method_call.method_name().compare("writeCharacteristic") == 0) {
+    WriteCharacteristic(method_call.arguments(), std::move(result));
+  } else if (method_call.method_name().compare("writeDescriptor") == 0) {
+    WriteDescriptor(method_call.arguments(), std::move(result));
+  } else if (method_call.method_name().compare("setNotification") == 0) {
+    SetNotification(method_call.arguments(), std::move(result));
   } else {
     result->NotImplemented();
   }

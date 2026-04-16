@@ -23,6 +23,8 @@ namespace omni_ble {
 struct CachedGattCharacteristic {
   winrt::Windows::Devices::Bluetooth::GenericAttributeProfile::
       GattCharacteristic characteristic{nullptr};
+  winrt::event_token value_changed_token_{};
+  bool value_changed_active = false;
   std::unordered_map<
       std::string,
       winrt::Windows::Devices::Bluetooth::GenericAttributeProfile::
@@ -93,12 +95,38 @@ class OmniBlePlugin : public flutter::Plugin {
   void DiscoverServices(
       const flutter::EncodableValue* arguments,
       std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>> result);
+  void ReadCharacteristic(
+      const flutter::EncodableValue* arguments,
+      std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>> result);
+  void ReadDescriptor(
+      const flutter::EncodableValue* arguments,
+      std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>> result);
+  void WriteCharacteristic(
+      const flutter::EncodableValue* arguments,
+      std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>> result);
+  void WriteDescriptor(
+      const flutter::EncodableValue* arguments,
+      std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>> result);
+  void SetNotification(
+      const flutter::EncodableValue* arguments,
+      std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>> result);
   void OnStreamListen(std::unique_ptr<EventSink>&& events);
   void OnStreamCancel();
   void HandleConnectionStatusChanged(
       const winrt::Windows::Devices::Bluetooth::BluetoothLEDevice& device);
+  void EmitCharacteristicValueChanged(const std::string& device_id,
+                                      const std::string& service_uuid,
+                                      const std::string& characteristic_uuid,
+                                      const std::vector<uint8_t>& value);
   ConnectionContext* FindConnection(const std::string& device_id);
   ConnectionContext* FindConnectedConnection(const std::string& device_id);
+  CachedGattCharacteristic* FindCharacteristic(ConnectionContext* connection,
+                                               const std::string& service_uuid,
+                                               const std::string& characteristic_uuid);
+  winrt::Windows::Devices::Bluetooth::GenericAttributeProfile::GattDescriptor*
+  FindDescriptor(ConnectionContext* connection, const std::string& service_uuid,
+                 const std::string& characteristic_uuid,
+                 const std::string& descriptor_uuid);
   bool RefreshGattCache(ConnectionContext* connection, std::string& error_code,
                         std::string& error_message);
   void ClearConnection(const std::string& device_id);

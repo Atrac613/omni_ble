@@ -87,5 +87,39 @@ TEST(OmniBlePlugin, DiscoverServicesRequiresConnection) {
             "Bluetooth device must be connected before discovering services.");
 }
 
+TEST(OmniBlePlugin, WriteDescriptorRejectsCccdWrites) {
+  OmniBlePlugin plugin;
+  std::string error_code;
+  std::string error_message;
+  EncodableMap arguments;
+  arguments[EncodableValue("deviceId")] =
+      EncodableValue("AA:BB:CC:DD:EE:FF");
+  arguments[EncodableValue("serviceUuid")] =
+      EncodableValue("180D");
+  arguments[EncodableValue("characteristicUuid")] =
+      EncodableValue("2A37");
+  arguments[EncodableValue("descriptorUuid")] =
+      EncodableValue("2902");
+  arguments[EncodableValue("value")] =
+      EncodableValue(flutter::EncodableList{EncodableValue(1), EncodableValue(0)});
+  plugin.HandleMethodCall(
+      MethodCall("writeDescriptor",
+                 std::make_unique<EncodableValue>(arguments)),
+      std::make_unique<MethodResultFunctions<>>(
+          nullptr,
+          [&error_code, &error_message](const std::string& code,
+                                        const std::string& message,
+                                        const flutter::EncodableValue* details) {
+            error_code = code;
+            error_message = message;
+          },
+          nullptr));
+
+  EXPECT_EQ(error_code, "unsupported");
+  EXPECT_EQ(
+      error_message,
+      "Use setNotification() to update the client characteristic configuration descriptor.");
+}
+
 }  // namespace test
 }  // namespace omni_ble
