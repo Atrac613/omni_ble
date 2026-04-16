@@ -1,0 +1,220 @@
+import 'package:flutter/services.dart';
+import 'package:flutter_test/flutter_test.dart';
+import 'package:omni_ble/omni_ble.dart';
+
+void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+
+  final platform = MethodChannelOmniBle();
+  const channel = MethodChannel('omni_ble/methods');
+  MethodCall? lastCall;
+
+  setUp(() {
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(channel, (MethodCall methodCall) async {
+          lastCall = methodCall;
+          switch (methodCall.method) {
+            case 'getCapabilities':
+              return {
+                'platform': 'android',
+                'platformVersion': '16',
+                'availableFeatures': ['central', 'scanning'],
+              };
+            case 'checkPermissions':
+              return {
+                'permissions': {'scan': 'granted', 'connect': 'denied'},
+                'allGranted': false,
+              };
+            case 'requestPermissions':
+              return {
+                'permissions': {'scan': 'granted', 'connect': 'granted'},
+                'allGranted': true,
+              };
+            case 'readCharacteristic':
+              return Uint8List.fromList([1, 2, 3]);
+            case 'discoverServices':
+              return [
+                {
+                  'uuid': '0000180d-0000-1000-8000-00805f9b34fb',
+                  'primary': true,
+                  'characteristics': [
+                    {
+                      'uuid': '00002a37-0000-1000-8000-00805f9b34fb',
+                      'properties': ['read', 'notify'],
+                      'permissions': [],
+                      'descriptors': [],
+                    },
+                  ],
+                },
+              ];
+            case 'connect':
+              throw PlatformException(
+                code: 'permission-denied',
+                message: 'No permission',
+              );
+            default:
+              return null;
+          }
+        });
+  });
+
+  tearDown(() {
+    lastCall = null;
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(channel, null);
+  });
+
+  test('getCapabilities decodes feature list', () async {
+    final capabilities = await platform.getCapabilities();
+
+    expect(capabilities.platform, 'android');
+    expect(capabilities.platformVersion, '16');
+    expect(capabilities.supports(OmniBleFeature.central), isTrue);
+    expect(capabilities.supports(OmniBleFeature.scanning), isTrue);
+  });
+
+  test('checkPermissions decodes permission states', () async {
+    final status = await platform.checkPermissions({
+      OmniBlePermission.scan,
+      OmniBlePermission.connect,
+    });
+
+    expect(lastCall?.method, 'checkPermissions');
+    expect(lastCall?.arguments, {
+      'permissions': ['scan', 'connect'],
+    });
+    expect(status.isGranted(OmniBlePermission.scan), isTrue);
+    expect(status.isGranted(OmniBlePermission.connect), isFalse);
+    expect(status.allGranted, isFalse);
+  });
+
+  test('startScan encodes config payload', () async {
+    await platform.startScan(
+      const OmniBleScanConfig(serviceUuids: ['180D'], allowDuplicates: true),
+    );
+
+    expect(lastCall?.method, 'startScan');
+    expect(lastCall?.arguments, {
+      'serviceUuids': ['180D'],
+      'allowDuplicates': true,
+    });
+  });
+
+  test('readCharacteristic decodes bytes', () async {
+    final value = await platform.readCharacteristic(
+      const OmniBleCharacteristicAddress(
+        deviceId: 'device-1',
+        serviceUuid: '180D',
+        characteristicUuid: '2A37',
+      ),
+    );
+
+    expect(value, Uint8List.fromList([1, 2, 3]));
+  });
+
+  test('discoverServices decodes GATT payloads', () async {
+    final services = await platform.discoverServices('device-1');
+
+    expect(services, hasLength(1));
+    expect(services.single.uuid, '0000180d-0000-1000-8000-00805f9b34fb');
+    expect(
+      services.single.characteristics.single.properties,
+      containsAll({OmniBleGattProperty.read, OmniBleGattProperty.notify}),
+    );
+  });
+
+  test('writeCharacteristic encodes write payload', () async {
+    await platform.writeCharacteristic(
+      const OmniBleCharacteristicAddress(
+        deviceId: 'device-1',
+        serviceUuid: '180D',
+        characteristicUuid: '2A37',
+      ),
+      Uint8List.fromList([4, 5, 6]),
+      type: OmniBleWriteType.withoutResponse,
+    );
+
+    expect(lastCall?.method, 'writeCharacteristic');
+    expect(lastCall?.arguments['deviceId'], 'device-1');
+    expect(lastCall?.arguments['serviceUuid'], '180D');
+    expect(lastCall?.arguments['characteristicUuid'], '2A37');
+    expect(lastCall?.arguments['writeType'], 'withoutResponse');
+    expect(lastCall?.arguments['value'], Uint8List.fromList([4, 5, 6]));
+  });
+
+  test('publishGattDatabase encodes nested services', () async {
+    await platform.publishGattDatabase(
+      const OmniBleGattDatabase(
+        services: [
+          OmniBleGattService(
+            uuid: '180D',
+            characteristics: [
+              OmniBleGattCharacteristic(
+                uuid: '2A37',
+                properties: {OmniBleGattProperty.notify},
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+
+    expect(lastCall?.method, 'publishGattDatabase');
+    expect((lastCall?.arguments['services'] as List).single['uuid'], '180D');
+  });
+
+  test('startAdvertising encodes advertisement payload', () async {
+    await platform.startAdvertising(
+      OmniBleAdvertisement(
+        localName: 'omni_ble',
+        serviceUuids: const ['180D'],
+        manufacturerData: Uint8List.fromList([0x34, 0x12, 0x01]),
+      ),
+    );
+
+    expect(lastCall?.method, 'startAdvertising');
+    expect(lastCall?.arguments['localName'], 'omni_ble');
+    expect(lastCall?.arguments['serviceUuids'], ['180D']);
+    expect(
+      lastCall?.arguments['manufacturerData'],
+      Uint8List.fromList([0x34, 0x12, 0x01]),
+    );
+  });
+
+  test('respondToReadRequest encodes response payload', () async {
+    await platform.respondToReadRequest(
+      'request-1',
+      Uint8List.fromList([7, 8]),
+    );
+
+    expect(lastCall?.method, 'respondToReadRequest');
+    expect(lastCall?.arguments['requestId'], 'request-1');
+    expect(lastCall?.arguments['value'], Uint8List.fromList([7, 8]));
+  });
+
+  test('requestPermissions encodes permission payload', () async {
+    final status = await platform.requestPermissions({
+      OmniBlePermission.scan,
+      OmniBlePermission.connect,
+    });
+
+    expect(lastCall?.method, 'requestPermissions');
+    expect(lastCall?.arguments, {
+      'permissions': ['scan', 'connect'],
+    });
+    expect(status.allGranted, isTrue);
+  });
+
+  test('platform exceptions are wrapped', () async {
+    expect(
+      () => platform.connect('device-1'),
+      throwsA(
+        isA<OmniBleException>().having(
+          (error) => error.code,
+          'code',
+          'permission-denied',
+        ),
+      ),
+    );
+  });
+}
