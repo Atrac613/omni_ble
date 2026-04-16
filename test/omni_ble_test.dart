@@ -246,6 +246,18 @@ void main() {
     expect(event.value, Uint8List.fromList([1, 2, 3]));
   });
 
+  test('OmniBleEvent parses scan errors', () {
+    final event = OmniBleEvent.fromMap({
+      'type': 'scanError',
+      'code': 3,
+      'message': 'Scan registration failed',
+    });
+
+    expect(event, isA<OmniBleScanErrorEvent>());
+    expect((event as OmniBleScanErrorEvent).code, 3);
+    expect(event.message, 'Scan registration failed');
+  });
+
   test('OmniBleEvent parses read requests', () {
     final event = OmniBleEvent.fromMap({
       'type': 'readRequest',

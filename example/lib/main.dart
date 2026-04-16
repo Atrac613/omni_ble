@@ -37,6 +37,7 @@ class _OmniBleHomePageState extends State<OmniBleHomePage> {
   OmniBlePermissionStatus _permissionStatus = const OmniBlePermissionStatus();
   Map<String, int> _connectedRssi = const {};
   bool _isScanning = false;
+  String? _lastScanError;
   String? _rssiLoadingDeviceId;
   List<OmniBleScanResult> _scanResults = const [];
 
@@ -59,6 +60,7 @@ class _OmniBleHomePageState extends State<OmniBleHomePage> {
       return;
     }
 
+    String? errorMessage;
     setState(() {
       if (event is OmniBleAdapterStateChanged) {
         _adapterState = event.state;
@@ -77,8 +79,23 @@ class _OmniBleHomePageState extends State<OmniBleHomePage> {
         }
         nextResults.sort((left, right) => right.rssi.compareTo(left.rssi));
         _scanResults = nextResults;
+        return;
+      }
+
+      if (event is OmniBleScanErrorEvent) {
+        final codeLabel = event.code?.toString() ?? 'unknown';
+        _isScanning = false;
+        _lastScanError =
+            event.message ?? 'Bluetooth scanning failed with code $codeLabel.';
+        errorMessage = _lastScanError;
       }
     });
+
+    if (errorMessage != null) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(errorMessage!)));
+    }
   }
 
   Future<void> _refreshPermissionStatus() async {
@@ -188,6 +205,7 @@ class _OmniBleHomePageState extends State<OmniBleHomePage> {
       }
       setState(() {
         _isScanning = true;
+        _lastScanError = null;
         _scanResults = const [];
       });
     } on OmniBleException catch (error) {
@@ -367,6 +385,15 @@ class _OmniBleHomePageState extends State<OmniBleHomePage> {
                     : null,
                 child: Text(_isScanning ? 'Stop scan' : 'Start scan'),
               ),
+              if (_lastScanError != null) ...[
+                const SizedBox(height: 12),
+                Card(
+                  child: Padding(
+                    padding: const EdgeInsets.all(16),
+                    child: Text('Last scan error: $_lastScanError'),
+                  ),
+                ),
+              ],
               const SizedBox(height: 12),
               Card(
                 child: Padding(
@@ -431,7 +458,7 @@ class _OmniBleHomePageState extends State<OmniBleHomePage> {
                   padding: EdgeInsets.all(16),
                   child: Text(
                     'Permissions: check/request BLE runtime permissions\n'
-                    'Central: startScan, connect, readRssi, discoverServices, read/write, setNotification, characteristic events\n'
+                    'Central: startScan, scan error events, connect, readRssi, discoverServices, read/write, setNotification, characteristic events\n'
                     'Peripheral: publishGattDatabase, startAdvertising, notifyCharacteristicValue, request/subscription events, respondToReadRequest/respondToWriteRequest',
                   ),
                 ),

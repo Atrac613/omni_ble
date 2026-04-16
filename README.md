@@ -82,7 +82,7 @@ Future<void> peripheralFlow() async {
 
 - `iOS`: `getCapabilities()`, adapter state events, `startScan()`, `stopScan()`, scan result events, `connect()`, `disconnect()`, connection state events, `readRssi()`, `discoverServices()`, `readCharacteristic()`, `readDescriptor()`, `writeCharacteristic()`, `writeDescriptor()`, `setNotification()`, characteristic value change events, `publishGattDatabase()`, `clearGattDatabase()`, `startAdvertising()`, `stopAdvertising()`, `notifyCharacteristicValue()`, `readRequest`/`writeRequest`/`subscriptionChanged` events, `respondToReadRequest()`, `respondToWriteRequest()`, `checkPermissions()`, `requestPermissions()` (`notRequired`)
 - `macOS`: `getCapabilities()`, adapter state events, `startScan()`, `stopScan()`, scan result events, `connect()`, `disconnect()`, connection state events, `readRssi()`, `discoverServices()`, `readCharacteristic()`, `readDescriptor()`, `writeCharacteristic()`, `writeDescriptor()`, `setNotification()`, characteristic value change events, `publishGattDatabase()`, `clearGattDatabase()`, `startAdvertising()`, `stopAdvertising()`, `notifyCharacteristicValue()`, `readRequest`/`writeRequest`/`subscriptionChanged` events, `respondToReadRequest()`, `respondToWriteRequest()`, `checkPermissions()`, `requestPermissions()` (`notRequired`)
-- `Android`: `getCapabilities()`, adapter state events, `startScan()`, `stopScan()`, scan result events, `connect()`, `disconnect()`, connection state events, `readRssi()`, `discoverServices()`, `readCharacteristic()`, `readDescriptor()`, `writeCharacteristic()`, `writeDescriptor()`, `setNotification()`, characteristic value change events, `publishGattDatabase()`, `clearGattDatabase()`, `startAdvertising()`, `stopAdvertising()`, `notifyCharacteristicValue()`, `readRequest`/`writeRequest`/`subscriptionChanged` events, `respondToReadRequest()`, `respondToWriteRequest()`, `checkPermissions()`, `requestPermissions()`
+- `Android`: `getCapabilities()`, adapter state events, `startScan()`, `stopScan()`, scan result events, `scanError` events, `connect()`, `disconnect()`, connection state events, `readRssi()`, `discoverServices()`, `readCharacteristic()`, `readDescriptor()`, `writeCharacteristic()`, `writeDescriptor()`, `setNotification()`, characteristic value change events, `publishGattDatabase()`, `clearGattDatabase()`, `startAdvertising()`, `stopAdvertising()`, `notifyCharacteristicValue()`, `readRequest`/`writeRequest`/`subscriptionChanged` events, `respondToReadRequest()`, `respondToWriteRequest()`, `checkPermissions()`, `requestPermissions()`
 - `Windows`: scaffold plus `checkPermissions()`/`requestPermissions()` (`notRequired`)
 - `Linux`: scaffold plus `checkPermissions()`/`requestPermissions()` (`notRequired`)
 
@@ -93,6 +93,7 @@ Future<void> peripheralFlow() async {
 - `ble.permissions.request({...})` triggers the Android permission prompt when an activity is attached.
 - Android 12+ still requires runtime approval for `BLUETOOTH_SCAN`, `BLUETOOTH_CONNECT`, and `BLUETOOTH_ADVERTISE`.
 - Android 11 and below still requires runtime approval for location before scanning.
+- Android scan failures are also surfaced through the shared event stream as `OmniBleScanErrorEvent`.
 - On non-Android targets, the permission API returns `notRequired` for the requested BLE permissions.
 
 ## Recommended next steps

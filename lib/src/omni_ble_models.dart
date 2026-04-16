@@ -458,6 +458,11 @@ sealed class OmniBleEvent {
         return OmniBleScanResultEvent(
           OmniBleScanResult.fromMap(_rawMap(map['result'])),
         );
+      case OmniBleScanErrorEvent.typeValue:
+        return OmniBleScanErrorEvent(
+          code: _intOrNull(map['code']),
+          message: map['message']?.toString(),
+        );
       case OmniBleConnectionStateChanged.typeValue:
         return OmniBleConnectionStateChanged(
           deviceId: (map['deviceId'] ?? '').toString(),
@@ -516,6 +521,15 @@ final class OmniBleScanResultEvent extends OmniBleEvent {
   static const typeValue = 'scanResult';
 
   final OmniBleScanResult result;
+}
+
+final class OmniBleScanErrorEvent extends OmniBleEvent {
+  const OmniBleScanErrorEvent({this.code, this.message}) : super(typeValue);
+
+  static const typeValue = 'scanError';
+
+  final int? code;
+  final String? message;
 }
 
 final class OmniBleConnectionStateChanged extends OmniBleEvent {
@@ -637,6 +651,19 @@ Map<String, Uint8List> _bytesMap(Object? value) {
     (key, entryValue) =>
         MapEntry(key.toString(), _bytesOrNull(entryValue) ?? Uint8List(0)),
   );
+}
+
+int? _intOrNull(Object? value) {
+  if (value is int) {
+    return value;
+  }
+  if (value is num) {
+    return value.toInt();
+  }
+  if (value is String) {
+    return int.tryParse(value);
+  }
+  return null;
 }
 
 Uint8List? _bytesOrNull(Object? value) {
