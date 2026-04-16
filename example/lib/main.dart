@@ -1,8 +1,9 @@
 import 'dart:async';
-import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:omni_ble/omni_ble.dart';
+import 'package:omni_ble_example/device_lab_session.dart';
 
 void main() {
   runApp(const OmniBleExampleApp());
@@ -40,9 +41,11 @@ class _OmniBleHomePageState extends State<OmniBleHomePage> {
   StreamSubscription<OmniBleEvent>? _eventsSubscription;
   OmniBleAdapterState _adapterState = OmniBleAdapterState.unknown;
   OmniBlePermissionStatus _permissionStatus = const OmniBlePermissionStatus();
+  OmniBleCapabilities? _lastCapabilities;
   Map<OmniBlePermission, bool> _permissionRationales = const {};
   Map<String, int> _connectedRssi = const {};
   Map<String, String> _serviceSummaries = const {};
+  List<DeviceLabSessionEntry> _sessionEntries = const [];
   bool _isScanning = false;
   bool _isPeripheralBusy = false;
   bool _peripheralPublished = false;
@@ -56,7 +59,7 @@ class _OmniBleHomePageState extends State<OmniBleHomePage> {
   @override
   void initState() {
     super.initState();
-    _capabilitiesFuture = _ble.getCapabilities();
+    _capabilitiesFuture = _loadCapabilities();
     _eventsSubscription = _ble.events.listen(_onEvent);
     unawaited(_refreshPermissionStatus());
     unawaited(_refreshPermissionRationales());
@@ -68,15 +71,113 @@ class _OmniBleHomePageState extends State<OmniBleHomePage> {
     super.dispose();
   }
 
+  Future<OmniBleCapabilities> _loadCapabilities() async {
+    final capabilities = await _ble.getCapabilities();
+    if (!mounted) {
+      return capabilities;
+    }
+    setState(() {
+      _lastCapabilities = capabilities;
+    });
+    return capabilities;
+  }
+
+  void _recordSessionEntry(String category, String message) {
+    if (!mounted) {
+      return;
+    }
+    final nextEntries = [
+      ..._sessionEntries,
+      DeviceLabSessionEntry(
+        timestamp: DateTime.now(),
+        category: category,
+        message: message,
+      ),
+    ];
+    final cappedEntries = nextEntries.length > 60
+        ? nextEntries.sublist(nextEntries.length - 60)
+        : nextEntries;
+    setState(() {
+      _sessionEntries = cappedEntries;
+    });
+  }
+
+  List<String> _permissionStatusLabels() {
+    return _permissionStatus.permissions.entries
+        .map((entry) => '${entry.key.value}=${entry.value.value}')
+        .toList(growable: false);
+  }
+
+  List<String> _scanSummaries() {
+    return _scanResults
+        .take(8)
+        .map((result) {
+          final label = result.name ?? result.deviceId;
+          final inspected = _serviceSummaries[result.deviceId];
+          return inspected == null
+              ? '$label (RSSI ${result.rssi})'
+              : '$label (RSSI ${result.rssi}) - $inspected';
+        })
+        .toList(growable: false);
+  }
+
+  String _buildSessionReport() {
+    final capabilities = _lastCapabilities;
+    return buildDeviceLabSessionReport(
+      DeviceLabSessionSnapshot(
+        platform: capabilities?.platform ?? 'unknown',
+        platformVersion: capabilities?.platformVersion ?? 'unknown',
+        adapterState: _adapterState.value,
+        availableFeatures: capabilities?.availableFeatures
+                .map((feature) => feature.value)
+                .toList(growable: false) ??
+            const [],
+        permissionStatuses: _permissionStatusLabels(),
+        isScanning: _isScanning,
+        peripheralPublished: _peripheralPublished,
+        peripheralAdvertising: _peripheralAdvertising,
+        scanSummaries: _scanSummaries(),
+        lastScanError: _lastScanError,
+        entries: _sessionEntries,
+      ),
+    );
+  }
+
+  Future<void> _copySessionReport() async {
+    final report = _buildSessionReport();
+    await Clipboard.setData(ClipboardData(text: report));
+    if (!mounted) {
+      return;
+    }
+    _recordSessionEntry('lab', 'Copied the device-lab session report.');
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Copied the device-lab session report.')),
+    );
+  }
+
+  void _clearSessionLog() {
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      _sessionEntries = const [];
+    });
+  }
+
   void _onEvent(OmniBleEvent event) {
     if (!mounted) {
       return;
     }
 
     String? errorMessage;
+    String? sessionCategory;
+    String? sessionMessage;
+    var discoveredNewDevice = false;
     setState(() {
       if (event is OmniBleAdapterStateChanged) {
         _adapterState = event.state;
+        sessionCategory = 'adapter';
+        sessionMessage = 'Adapter state changed to ${event.state.value}.';
         return;
       }
 
@@ -84,6 +185,7 @@ class _OmniBleHomePageState extends State<OmniBleHomePage> {
         final existingIndex = _scanResults.indexWhere(
           (result) => result.deviceId == event.result.deviceId,
         );
+        discoveredNewDevice = existingIndex == -1;
         final nextResults = [..._scanResults];
         if (existingIndex == -1) {
           nextResults.add(event.result);
@@ -92,6 +194,11 @@ class _OmniBleHomePageState extends State<OmniBleHomePage> {
         }
         nextResults.sort((left, right) => right.rssi.compareTo(left.rssi));
         _scanResults = nextResults;
+        if (discoveredNewDevice) {
+          sessionCategory = 'scan';
+          sessionMessage =
+              'Discovered ${event.result.name ?? event.result.deviceId} at RSSI ${event.result.rssi}.';
+        }
         return;
       }
 
@@ -101,12 +208,47 @@ class _OmniBleHomePageState extends State<OmniBleHomePage> {
         _lastScanError =
             event.message ?? 'Bluetooth scanning failed with code $codeLabel.';
         errorMessage = _lastScanError;
+        sessionCategory = 'scan';
+        sessionMessage = _lastScanError;
+        return;
+      }
+
+      if (event is OmniBleConnectionStateChanged) {
+        sessionCategory = 'central';
+        sessionMessage =
+            'Connection state for ${event.deviceId} changed to ${event.state.value}.';
+        return;
+      }
+
+      if (event is OmniBleMtuChangedEvent) {
+        sessionCategory = 'central';
+        sessionMessage = event.status == null
+            ? 'MTU for ${event.deviceId} changed to ${event.mtu}.'
+            : 'MTU for ${event.deviceId} changed to ${event.mtu} (status ${event.status}).';
+        return;
+      }
+
+      if (event is OmniBlePhyUpdatedEvent) {
+        sessionCategory = 'central';
+        sessionMessage = event.status == null
+            ? 'PHY updated for ${event.deviceId} to tx=${event.txPhy.value}, rx=${event.rxPhy.value}.'
+            : 'PHY updated for ${event.deviceId} to tx=${event.txPhy.value}, rx=${event.rxPhy.value} (status ${event.status}).';
+        return;
+      }
+
+      if (event is OmniBleCharacteristicValueChanged) {
+        sessionCategory = 'notify';
+        sessionMessage =
+            'Characteristic ${event.address.characteristicUuid} changed with ${event.value.length} bytes.';
         return;
       }
 
       if (event is OmniBleReadRequestEvent) {
         _lastPeripheralEvent =
             'Read request at offset ${event.offset} for ${event.characteristicUuid}.';
+        sessionCategory = 'peripheral';
+        sessionMessage =
+            'Incoming read request ${event.requestId} at offset ${event.offset} for ${event.characteristicUuid}.';
         unawaited(_respondToReadRequest(event));
         return;
       }
@@ -120,12 +262,18 @@ class _OmniBleHomePageState extends State<OmniBleHomePage> {
         }
         _lastPeripheralEvent =
             'Write request at offset ${event.offset} with $payloadLabel.';
+        sessionCategory = 'peripheral';
+        sessionMessage =
+            'Incoming write request ${event.requestId} at offset ${event.offset} with $payloadLabel.';
         unawaited(_respondToWriteRequest(event));
         return;
       }
 
       if (event is OmniBleSubscriptionChanged) {
         _lastPeripheralEvent =
+            '${event.subscribed ? 'Subscribed' : 'Unsubscribed'} on ${event.characteristicUuid}.';
+        sessionCategory = 'peripheral';
+        sessionMessage =
             '${event.subscribed ? 'Subscribed' : 'Unsubscribed'} on ${event.characteristicUuid}.';
         return;
       }
@@ -134,8 +282,14 @@ class _OmniBleHomePageState extends State<OmniBleHomePage> {
         _lastPeripheralEvent = event.status == null
             ? 'Notification queue is ready.'
             : 'Notification queue is ready (status ${event.status}).';
+        sessionCategory = 'peripheral';
+        sessionMessage = _lastPeripheralEvent;
       }
     });
+
+    if (sessionCategory != null && sessionMessage != null) {
+      _recordSessionEntry(sessionCategory!, sessionMessage!);
+    }
 
     if (errorMessage != null) {
       ScaffoldMessenger.of(
@@ -198,6 +352,10 @@ class _OmniBleHomePageState extends State<OmniBleHomePage> {
         _permissionStatus = permissionStatus;
       });
       await _refreshPermissionRationales();
+      _recordSessionEntry(
+        'permissions',
+        'Requested BLE permissions: ${_permissionStatusLabels().join(', ')}.',
+      );
     } on OmniBleException catch (error) {
       if (!mounted) {
         return;
@@ -222,6 +380,10 @@ class _OmniBleHomePageState extends State<OmniBleHomePage> {
       );
     });
     await _refreshPermissionRationales();
+    _recordSessionEntry(
+      'permissions',
+      'Requested ${permission.value}: ${permissionStatus.permissions[permission]?.value ?? 'unknown'}.',
+    );
     return permissionStatus.isGranted(permission);
   }
 
@@ -239,6 +401,12 @@ class _OmniBleHomePageState extends State<OmniBleHomePage> {
                 : 'App settings are not available on this platform.',
           ),
         ),
+      );
+      _recordSessionEntry(
+        'permissions',
+        opened
+            ? 'Opened app settings from the example app.'
+            : 'App settings are not available on this platform.',
       );
     } on OmniBleException catch (error) {
       _showError(error);
@@ -260,6 +428,12 @@ class _OmniBleHomePageState extends State<OmniBleHomePage> {
           ),
         ),
       );
+      _recordSessionEntry(
+        'permissions',
+        opened
+            ? 'Opened Bluetooth settings from the example app.'
+            : 'Bluetooth settings are not available on this platform.',
+      );
     } on OmniBleException catch (error) {
       _showError(error);
     }
@@ -269,6 +443,7 @@ class _OmniBleHomePageState extends State<OmniBleHomePage> {
     if (!mounted) {
       return;
     }
+    _recordSessionEntry('error', '${error.code}: ${error.message}');
     ScaffoldMessenger.of(
       context,
     ).showSnackBar(SnackBar(content: Text('${error.code}: ${error.message}')));
@@ -307,6 +482,7 @@ class _OmniBleHomePageState extends State<OmniBleHomePage> {
         setState(() {
           _isScanning = false;
         });
+        _recordSessionEntry('scan', 'Stopped scanning.');
         return;
       }
 
@@ -323,6 +499,10 @@ class _OmniBleHomePageState extends State<OmniBleHomePage> {
               content: Text('Bluetooth scan permission was denied.'),
             ),
           );
+          _recordSessionEntry(
+            'permissions',
+            'Bluetooth scan permission was denied before scanning.',
+          );
           return;
         }
       }
@@ -336,6 +516,7 @@ class _OmniBleHomePageState extends State<OmniBleHomePage> {
         _lastScanError = null;
         _scanResults = const [];
       });
+      _recordSessionEntry('scan', 'Started scanning for BLE peripherals.');
     } on OmniBleException catch (error) {
       if (!mounted) {
         return;
@@ -372,6 +553,10 @@ class _OmniBleHomePageState extends State<OmniBleHomePage> {
     }
 
     try {
+      _recordSessionEntry(
+        'central',
+        'Started central smoke against ${result.name ?? result.deviceId}.',
+      );
       setState(() {
         _centralActionDeviceId = result.deviceId;
       });
@@ -444,6 +629,14 @@ class _OmniBleHomePageState extends State<OmniBleHomePage> {
             '${negotiatedMtu == null ? '' : ' • MTU $negotiatedMtu'}',
           ),
         ),
+      );
+      _recordSessionEntry(
+        'central',
+        'Central smoke passed for ${result.name ?? result.deviceId}: '
+        '${services.length} services, $characteristicCount characteristics'
+        '${descriptorCount == 0 ? '' : ', $descriptorCount descriptors'}'
+        '${rssi == null ? '' : ', RSSI $rssi dBm'}'
+        '${negotiatedMtu == null ? '' : ', MTU $negotiatedMtu'}.',
       );
     } on OmniBleException catch (error) {
       _showError(error);
@@ -518,6 +711,7 @@ class _OmniBleHomePageState extends State<OmniBleHomePage> {
         _peripheralPublished = true;
         _lastPeripheralEvent = 'Demo GATT database published.';
       });
+      _recordSessionEntry('peripheral', 'Published the demo GATT database.');
     } on OmniBleException catch (error) {
       _showError(error);
     } finally {
@@ -546,6 +740,7 @@ class _OmniBleHomePageState extends State<OmniBleHomePage> {
         _peripheralAdvertising = false;
         _lastPeripheralEvent = 'Demo GATT database cleared.';
       });
+      _recordSessionEntry('peripheral', 'Cleared the demo GATT database.');
     } on OmniBleException catch (error) {
       _showError(error);
     } finally {
@@ -572,6 +767,7 @@ class _OmniBleHomePageState extends State<OmniBleHomePage> {
           _peripheralAdvertising = false;
           _lastPeripheralEvent = 'Demo advertising stopped.';
         });
+        _recordSessionEntry('peripheral', 'Stopped demo advertising.');
         return;
       }
 
@@ -597,6 +793,7 @@ class _OmniBleHomePageState extends State<OmniBleHomePage> {
         _peripheralAdvertising = true;
         _lastPeripheralEvent = 'Demo advertising started.';
       });
+      _recordSessionEntry('peripheral', 'Started demo advertising.');
     } on OmniBleException catch (error) {
       _showError(error);
     } finally {
@@ -629,6 +826,10 @@ class _OmniBleHomePageState extends State<OmniBleHomePage> {
         _demoNotificationValue = (_demoNotificationValue + 1) & 0xFF;
         _lastPeripheralEvent = 'Sent demo notification ${value.first}.';
       });
+      _recordSessionEntry(
+        'peripheral',
+        'Sent demo notification ${value.first} on $_demoCharacteristicUuid.',
+      );
     } on OmniBleException catch (error) {
       _showError(error);
     } finally {
@@ -646,6 +847,10 @@ class _OmniBleHomePageState extends State<OmniBleHomePage> {
         event.requestId,
         Uint8List.fromList([_demoNotificationValue & 0xFF]),
       );
+      _recordSessionEntry(
+        'peripheral',
+        'Answered read request ${event.requestId} with value ${_demoNotificationValue & 0xFF}.',
+      );
     } on OmniBleException catch (error) {
       _showError(error);
     }
@@ -654,6 +859,10 @@ class _OmniBleHomePageState extends State<OmniBleHomePage> {
   Future<void> _respondToWriteRequest(OmniBleWriteRequestEvent event) async {
     try {
       await _ble.peripheral.respondToWriteRequest(event.requestId);
+      _recordSessionEntry(
+        'peripheral',
+        'Acknowledged write request ${event.requestId}.',
+      );
     } on OmniBleException catch (error) {
       _showError(error);
     }
@@ -976,12 +1185,57 @@ class _OmniBleHomePageState extends State<OmniBleHomePage> {
                 ),
               ),
               const SizedBox(height: 24),
+              Text(
+                'Device-lab session log',
+                style: Theme.of(context).textTheme.titleMedium,
+              ),
+              const SizedBox(height: 8),
+              Card(
+                child: Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: _sessionEntries.isEmpty
+                      ? const Text(
+                          'No device-lab session entries yet. Run a smoke flow or copy a report after interacting with the app.',
+                        )
+                      : Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            for (final entry in _sessionEntries.reversed.take(10))
+                              Padding(
+                                padding: const EdgeInsets.only(bottom: 8),
+                                child: Text(entry.toDisplayLine()),
+                              ),
+                          ],
+                        ),
+                ),
+              ),
+              const SizedBox(height: 12),
+              Wrap(
+                spacing: 12,
+                runSpacing: 12,
+                children: [
+                  FilledButton.tonal(
+                    onPressed: _copySessionReport,
+                    child: const Text('Copy session report'),
+                  ),
+                  OutlinedButton(
+                    onPressed:
+                        _sessionEntries.isEmpty ? null : _clearSessionLog,
+                    child: const Text('Clear session log'),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 24),
               FilledButton(
                 onPressed: () {
                   setState(() {
-                    _capabilitiesFuture = _ble.getCapabilities();
+                    _capabilitiesFuture = _loadCapabilities();
                   });
                   unawaited(_refreshPermissionStatus());
+                  _recordSessionEntry(
+                    'lab',
+                    'Refreshed capabilities and runtime permission status.',
+                  );
                 },
                 child: const Text('Refresh capabilities'),
               ),
