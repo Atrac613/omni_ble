@@ -22,5 +22,25 @@ void main() {
 
     expect(capabilities.platform.isNotEmpty, true);
     expect(capabilities.platformVersion.isNotEmpty, true);
+    expect(capabilities.metadata.containsKey('adapterState'), true);
+  });
+
+  testWidgets('permission helpers return structured values', (
+    WidgetTester tester,
+  ) async {
+    const plugin = OmniBle();
+    const permissions = {
+      OmniBlePermission.scan,
+      OmniBlePermission.connect,
+      OmniBlePermission.advertise,
+    };
+
+    final status = await plugin.permissions.check(permissions);
+    final rationale = await plugin.permissions.shouldShowRequestRationale(
+      permissions,
+    );
+
+    expect(status.permissions.keys.toSet(), permissions);
+    expect(rationale.keys.toSet(), permissions);
   });
 }
