@@ -15,6 +15,9 @@ class MockOmniBlePlatform
   Set<OmniBlePermission>? lastRequestedPermissions;
   OmniBleConnectionConfig? lastConnectionConfig;
   String? lastConnectedDeviceId;
+  Set<OmniBlePermission>? lastRationalePermissions;
+  bool didOpenAppSettings = false;
+  bool didOpenBluetoothSettings = false;
   String? lastRequestMtuDeviceId;
   int? lastRequestedMtu;
   String? lastPriorityDeviceId;
@@ -47,6 +50,29 @@ class MockOmniBlePlatform
           permission: OmniBlePermissionState.granted,
       },
     );
+  }
+
+  @override
+  Future<Map<OmniBlePermission, bool>> shouldShowRequestRationale(
+    Set<OmniBlePermission> permissions,
+  ) async {
+    lastRationalePermissions = permissions;
+    return {
+      for (final permission in permissions)
+        permission: permission == OmniBlePermission.scan,
+    };
+  }
+
+  @override
+  Future<bool> openAppSettings() async {
+    didOpenAppSettings = true;
+    return true;
+  }
+
+  @override
+  Future<bool> openBluetoothSettings() async {
+    didOpenBluetoothSettings = true;
+    return true;
   }
 
   @override
@@ -217,6 +243,43 @@ void main() {
     });
     expect(status.allGranted, isTrue);
     expect(status.isGranted(OmniBlePermission.scan), isTrue);
+  });
+
+  test(
+    'permissions.shouldShowRequestRationale forwards permission set',
+    () async {
+      const omniBlePlugin = OmniBle();
+      final fakePlatform = MockOmniBlePlatform();
+      OmniBlePlatform.instance = fakePlatform;
+
+      final rationale = await omniBlePlugin.permissions
+          .shouldShowRequestRationale({
+            OmniBlePermission.scan,
+            OmniBlePermission.connect,
+          });
+
+      expect(fakePlatform.lastRationalePermissions, {
+        OmniBlePermission.scan,
+        OmniBlePermission.connect,
+      });
+      expect(rationale[OmniBlePermission.scan], isTrue);
+      expect(rationale[OmniBlePermission.connect], isFalse);
+    },
+  );
+
+  test('permissions open settings helpers forward to platform', () async {
+    const omniBlePlugin = OmniBle();
+    final fakePlatform = MockOmniBlePlatform();
+    OmniBlePlatform.instance = fakePlatform;
+
+    final openedAppSettings = await omniBlePlugin.permissions.openAppSettings();
+    final openedBluetoothSettings = await omniBlePlugin.permissions
+        .openBluetoothSettings();
+
+    expect(openedAppSettings, isTrue);
+    expect(openedBluetoothSettings, isTrue);
+    expect(fakePlatform.didOpenAppSettings, isTrue);
+    expect(fakePlatform.didOpenBluetoothSettings, isTrue);
   });
 
   test('central.startScan forwards configuration', () async {

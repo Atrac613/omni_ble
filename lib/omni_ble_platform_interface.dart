@@ -38,6 +38,14 @@ abstract class OmniBlePlatform extends PlatformInterface {
     Set<OmniBlePermission> permissions,
   );
 
+  Future<Map<OmniBlePermission, bool>> shouldShowRequestRationale(
+    Set<OmniBlePermission> permissions,
+  );
+
+  Future<bool> openAppSettings();
+
+  Future<bool> openBluetoothSettings();
+
   Future<void> startScan(OmniBleScanConfig config);
 
   Future<void> stopScan();

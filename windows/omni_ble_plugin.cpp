@@ -184,6 +184,35 @@ flutter::EncodableMap OmniBlePlugin::PermissionStatusPayload(
   return payload;
 }
 
+flutter::EncodableMap OmniBlePlugin::PermissionRationalePayload(
+    const flutter::EncodableValue* arguments) const {
+  flutter::EncodableMap permissions;
+
+  if (arguments != nullptr &&
+      std::holds_alternative<flutter::EncodableMap>(*arguments)) {
+    const auto& argument_map = std::get<flutter::EncodableMap>(*arguments);
+    const auto permissions_it =
+        argument_map.find(flutter::EncodableValue("permissions"));
+    if (permissions_it != argument_map.end() &&
+        std::holds_alternative<flutter::EncodableList>(permissions_it->second)) {
+      const auto& requested_permissions =
+          std::get<flutter::EncodableList>(permissions_it->second);
+      for (const auto& permission : requested_permissions) {
+        if (const auto* permission_name =
+                std::get_if<std::string>(&permission)) {
+          permissions[flutter::EncodableValue(*permission_name)] =
+              flutter::EncodableValue(false);
+        }
+      }
+    }
+  }
+
+  flutter::EncodableMap payload;
+  payload[flutter::EncodableValue("permissions")] =
+      flutter::EncodableValue(permissions);
+  return payload;
+}
+
 std::string OmniBlePlugin::CurrentAdapterState() const {
   const auto radio = TryGetBluetoothRadio();
   if (!radio.has_value()) {
@@ -501,6 +530,13 @@ void OmniBlePlugin::HandleMethodCall(
              method_call.method_name().compare("requestPermissions") == 0) {
     result->Success(flutter::EncodableValue(
         PermissionStatusPayload(method_call.arguments())));
+  } else if (method_call.method_name().compare("shouldShowRequestRationale") ==
+             0) {
+    result->Success(flutter::EncodableValue(
+        PermissionRationalePayload(method_call.arguments())));
+  } else if (method_call.method_name().compare("openAppSettings") == 0 ||
+             method_call.method_name().compare("openBluetoothSettings") == 0) {
+    result->Success(flutter::EncodableValue(false));
   } else if (method_call.method_name().compare("startScan") == 0) {
     StartScan(method_call.arguments(), std::move(result));
   } else if (method_call.method_name().compare("stopScan") == 0) {

@@ -35,6 +35,7 @@ class _OmniBleHomePageState extends State<OmniBleHomePage> {
   StreamSubscription<OmniBleEvent>? _eventsSubscription;
   OmniBleAdapterState _adapterState = OmniBleAdapterState.unknown;
   OmniBlePermissionStatus _permissionStatus = const OmniBlePermissionStatus();
+  Map<OmniBlePermission, bool> _permissionRationales = const {};
   Map<String, int> _connectedRssi = const {};
   bool _isScanning = false;
   String? _lastScanError;
@@ -47,6 +48,7 @@ class _OmniBleHomePageState extends State<OmniBleHomePage> {
     _capabilitiesFuture = _ble.getCapabilities();
     _eventsSubscription = _ble.events.listen(_onEvent);
     unawaited(_refreshPermissionStatus());
+    unawaited(_refreshPermissionRationales());
   }
 
   @override
@@ -119,6 +121,27 @@ class _OmniBleHomePageState extends State<OmniBleHomePage> {
     }
   }
 
+  Future<void> _refreshPermissionRationales() async {
+    try {
+      final rationale = await _ble.permissions.shouldShowRequestRationale(
+        _runtimePermissions,
+      );
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _permissionRationales = rationale;
+      });
+    } on OmniBleException {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _permissionRationales = const {};
+      });
+    }
+  }
+
   Future<void> _requestPermissionStatus() async {
     try {
       final permissionStatus = await _ble.permissions.request(
@@ -130,6 +153,7 @@ class _OmniBleHomePageState extends State<OmniBleHomePage> {
       setState(() {
         _permissionStatus = permissionStatus;
       });
+      await _refreshPermissionRationales();
     } on OmniBleException catch (error) {
       if (!mounted) {
         return;
@@ -153,7 +177,48 @@ class _OmniBleHomePageState extends State<OmniBleHomePage> {
         },
       );
     });
+    await _refreshPermissionRationales();
     return permissionStatus.isGranted(permission);
+  }
+
+  Future<void> _openAppSettings() async {
+    try {
+      final opened = await _ble.permissions.openAppSettings();
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            opened
+                ? 'Opened app settings.'
+                : 'App settings are not available on this platform.',
+          ),
+        ),
+      );
+    } on OmniBleException catch (error) {
+      _showError(error);
+    }
+  }
+
+  Future<void> _openBluetoothSettings() async {
+    try {
+      final opened = await _ble.permissions.openBluetoothSettings();
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            opened
+                ? 'Opened Bluetooth settings.'
+                : 'Bluetooth settings are not available on this platform.',
+          ),
+        ),
+      );
+    } on OmniBleException catch (error) {
+      _showError(error);
+    }
   }
 
   void _showError(OmniBleException error) {
@@ -320,6 +385,12 @@ class _OmniBleHomePageState extends State<OmniBleHomePage> {
           final features = capabilities.availableFeatures.toList(
             growable: false,
           );
+          final deniedPermissions = _permissionStatus.permissions.entries
+              .where((entry) => entry.value == OmniBlePermissionState.denied)
+              .toList(growable: false);
+          final shouldExplainPermission = deniedPermissions.any(
+            (entry) => _permissionRationales[entry.key] == true,
+          );
 
           return ListView(
             padding: const EdgeInsets.all(24),
@@ -392,12 +463,61 @@ class _OmniBleHomePageState extends State<OmniBleHomePage> {
                         ),
                 ),
               ),
+              if (capabilities.platform == 'android') ...[
+                const SizedBox(height: 12),
+                Card(
+                  child: Padding(
+                    padding: const EdgeInsets.all(16),
+                    child: _permissionRationales.isEmpty
+                        ? const Text(
+                            'Android permission rationale guidance is not available yet.',
+                          )
+                        : Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              for (final entry in _permissionRationales.entries)
+                                Padding(
+                                  padding: const EdgeInsets.only(bottom: 8),
+                                  child: Text(
+                                    '${entry.key.value}: '
+                                    '${entry.value ? 'show rationale before requesting again' : 'no rationale needed right now'}',
+                                  ),
+                                ),
+                              if (deniedPermissions.isNotEmpty)
+                                Text(
+                                  shouldExplainPermission
+                                      ? 'Android recommends showing an in-app rationale before re-requesting at least one denied permission.'
+                                      : 'If the system dialog no longer appears, use app settings to recover denied permissions.',
+                                ),
+                            ],
+                          ),
+                  ),
+                ),
+              ],
               const SizedBox(height: 12),
-              FilledButton.tonal(
-                onPressed: capabilities.platform == 'android'
-                    ? _requestPermissionStatus
-                    : null,
-                child: const Text('Request BLE permissions'),
+              Wrap(
+                spacing: 12,
+                runSpacing: 12,
+                children: [
+                  FilledButton.tonal(
+                    onPressed: capabilities.platform == 'android'
+                        ? _requestPermissionStatus
+                        : null,
+                    child: const Text('Request BLE permissions'),
+                  ),
+                  OutlinedButton(
+                    onPressed: capabilities.platform == 'android'
+                        ? _openAppSettings
+                        : null,
+                    child: const Text('Open app settings'),
+                  ),
+                  OutlinedButton(
+                    onPressed: capabilities.platform == 'android'
+                        ? _openBluetoothSettings
+                        : null,
+                    child: const Text('Bluetooth settings'),
+                  ),
+                ],
               ),
               const SizedBox(height: 24),
               FilledButton(

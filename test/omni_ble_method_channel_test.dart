@@ -30,6 +30,14 @@ void main() {
                 'permissions': {'scan': 'granted', 'connect': 'granted'},
                 'allGranted': true,
               };
+            case 'shouldShowRequestRationale':
+              return {
+                'permissions': {'scan': true, 'connect': false},
+              };
+            case 'openAppSettings':
+              return true;
+            case 'openBluetoothSettings':
+              return false;
             case 'readRssi':
               return -58;
             case 'requestMtu':
@@ -101,6 +109,31 @@ void main() {
     expect(status.isGranted(OmniBlePermission.scan), isTrue);
     expect(status.isGranted(OmniBlePermission.connect), isFalse);
     expect(status.allGranted, isFalse);
+  });
+
+  test('shouldShowRequestRationale decodes rationale flags', () async {
+    final rationale = await platform.shouldShowRequestRationale({
+      OmniBlePermission.scan,
+      OmniBlePermission.connect,
+    });
+
+    expect(lastCall?.method, 'shouldShowRequestRationale');
+    expect(lastCall?.arguments, {
+      'permissions': ['scan', 'connect'],
+    });
+    expect(rationale, {
+      OmniBlePermission.scan: true,
+      OmniBlePermission.connect: false,
+    });
+  });
+
+  test('settings helpers decode boolean payloads', () async {
+    final openedAppSettings = await platform.openAppSettings();
+    final openedBluetoothSettings = await platform.openBluetoothSettings();
+
+    expect(openedAppSettings, isTrue);
+    expect(openedBluetoothSettings, isFalse);
+    expect(lastCall?.method, 'openBluetoothSettings');
   });
 
   test('startScan encodes config payload', () async {

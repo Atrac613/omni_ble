@@ -75,6 +75,12 @@ public class OmniBlePlugin: NSObject, FlutterPlugin, FlutterStreamHandler, CBCen
       checkPermissions(arguments: call.arguments, result: result)
     case "requestPermissions":
       requestPermissions(arguments: call.arguments, result: result)
+    case "shouldShowRequestRationale":
+      shouldShowRequestRationale(arguments: call.arguments, result: result)
+    case "openAppSettings":
+      openAppSettings(result: result)
+    case "openBluetoothSettings":
+      openBluetoothSettings(result: result)
     case "startScan":
       startScan(arguments: call.arguments, result: result)
     case "stopScan":
@@ -709,6 +715,21 @@ public class OmniBlePlugin: NSObject, FlutterPlugin, FlutterStreamHandler, CBCen
 
   private func requestPermissions(arguments: Any?, result: FlutterResult) {
     result(permissionStatusPayload(arguments: arguments))
+  }
+
+  private func shouldShowRequestRationale(arguments: Any?, result: FlutterResult) {
+    let permissions = parseRequestedPermissions(arguments: arguments)
+    result([
+      "permissions": Dictionary(uniqueKeysWithValues: permissions.map { ($0, false) })
+    ])
+  }
+
+  private func openAppSettings(result: FlutterResult) {
+    result(false)
+  }
+
+  private func openBluetoothSettings(result: FlutterResult) {
+    result(false)
   }
 
   private func permissionStatusPayload(arguments: Any?) -> [String: Any] {

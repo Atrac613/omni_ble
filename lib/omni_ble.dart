@@ -38,6 +38,16 @@ class OmniBlePermissions {
   Future<OmniBlePermissionStatus> request(Set<OmniBlePermission> permissions) {
     return _platform.requestPermissions(permissions);
   }
+
+  Future<Map<OmniBlePermission, bool>> shouldShowRequestRationale(
+    Set<OmniBlePermission> permissions,
+  ) {
+    return _platform.shouldShowRequestRationale(permissions);
+  }
+
+  Future<bool> openAppSettings() => _platform.openAppSettings();
+
+  Future<bool> openBluetoothSettings() => _platform.openBluetoothSettings();
 }
 
 class OmniBleCentral {

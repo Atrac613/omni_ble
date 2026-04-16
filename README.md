@@ -9,7 +9,7 @@ The current state is an early but usable cross-platform BLE foundation:
 - Dart-side public API is defined for both central and peripheral workflows.
 - Platform channels are wired on every target.
 - iOS and macOS now implement adapter-state events, central scanning, connection state events, RSSI reads, service discovery, characteristic/descriptor read-write, notification subscriptions, and a first peripheral backend.
-- Android now implements the same central-side surface plus a first peripheral backend, including MTU / connection priority / PHY tuning helpers, and the Dart API can now check/request the runtime Bluetooth permissions those flows need.
+- Android now implements the same central-side surface plus a first peripheral backend, including MTU / connection priority / PHY tuning helpers, and the Dart API can now check/request the runtime Bluetooth permissions those flows need alongside rationale/settings helpers.
 - Linux now exposes adapter-state events and native LE scanning via BlueZ, and Windows now exposes adapter-state events plus native LE scanning via the WinRT advertisement watcher. The desktop permission API continues to return `notRequired`.
 
 ## API shape
@@ -95,13 +95,14 @@ Android central connections now accept `OmniBleConnectionConfig(timeout: ..., an
 - The plugin manifest declares BLE scan/connect/advertise permissions.
 - `ble.permissions.check({...})` reports whether runtime BLE permissions are already available.
 - `ble.permissions.request({...})` triggers the Android permission prompt when an activity is attached.
+- `ble.permissions.shouldShowRequestRationale({...})` reports whether Android recommends showing an in-app rationale before re-requesting a denied permission.
+- `ble.permissions.openAppSettings()` and `ble.permissions.openBluetoothSettings()` provide recovery shortcuts when the app needs to guide the user back into system settings.
 - Android 12+ still requires runtime approval for `BLUETOOTH_SCAN`, `BLUETOOTH_CONNECT`, and `BLUETOOTH_ADVERTISE`.
 - Android 11 and below still requires runtime approval for location before scanning.
 - Android scan failures are also surfaced through the shared event stream as `OmniBleScanErrorEvent`.
-- On non-Android targets, the permission API returns `notRequired` for the requested BLE permissions.
+- On non-Android targets, the permission API returns `notRequired` for the requested BLE permissions, `shouldShowRequestRationale()` returns `false`, and the settings helpers return `false`.
 
 ## Recommended next steps
 
 1. Expand device-lab integration coverage across Android, Apple, Windows, and Linux hardware.
 2. Bring Windows and Linux from scan-first support to fuller GATT client / peripheral parity.
-3. Add higher-level convenience helpers for permission rationale / settings recovery on Android.

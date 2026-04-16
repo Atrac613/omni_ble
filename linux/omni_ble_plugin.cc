@@ -523,6 +523,32 @@ static FlMethodResponse* permission_status_response(FlValue* arguments) {
   return success_response(result);
 }
 
+static FlMethodResponse* permission_rationale_response(FlValue* arguments) {
+  g_autoptr(FlValue) permissions = fl_value_new_map();
+  FlValue* requested_permissions = nullptr;
+
+  if (arguments != nullptr && fl_value_get_type(arguments) == FL_VALUE_TYPE_MAP) {
+    requested_permissions = fl_value_lookup_string(arguments, "permissions");
+  }
+
+  if (requested_permissions != nullptr &&
+      fl_value_get_type(requested_permissions) == FL_VALUE_TYPE_LIST) {
+    const size_t permission_count = fl_value_get_length(requested_permissions);
+    for (size_t index = 0; index < permission_count; index++) {
+      FlValue* permission = fl_value_get_list_value(requested_permissions, index);
+      if (fl_value_get_type(permission) != FL_VALUE_TYPE_STRING) {
+        continue;
+      }
+      fl_value_set_string_take(permissions, fl_value_get_string(permission),
+                               fl_value_new_bool(FALSE));
+    }
+  }
+
+  g_autoptr(FlValue) result = fl_value_new_map();
+  fl_value_set_string_take(result, "permissions", fl_value_ref(permissions));
+  return success_response(result);
+}
+
 static FlMethodResponse* start_scan(OmniBlePlugin* self, FlValue* arguments) {
   g_autoptr(GError) error = nullptr;
   if (!ensure_object_manager(self, &error)) {
@@ -654,6 +680,11 @@ static void omni_ble_plugin_handle_method_call(OmniBlePlugin* self,
   } else if (strcmp(method, "checkPermissions") == 0 ||
              strcmp(method, "requestPermissions") == 0) {
     response = permission_status_response(fl_method_call_get_args(method_call));
+  } else if (strcmp(method, "shouldShowRequestRationale") == 0) {
+    response = permission_rationale_response(fl_method_call_get_args(method_call));
+  } else if (strcmp(method, "openAppSettings") == 0 ||
+             strcmp(method, "openBluetoothSettings") == 0) {
+    response = success_response(fl_value_new_bool(FALSE));
   } else if (strcmp(method, "startScan") == 0) {
     response = start_scan(self, fl_method_call_get_args(method_call));
   } else if (strcmp(method, "stopScan") == 0) {

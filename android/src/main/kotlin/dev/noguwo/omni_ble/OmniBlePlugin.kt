@@ -28,10 +28,12 @@ import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.content.pm.PackageManager
+import android.net.Uri
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.os.ParcelUuid
+import android.provider.Settings
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import io.flutter.embedding.engine.plugins.FlutterPlugin
@@ -675,6 +677,9 @@ class OmniBlePlugin :
       "getCapabilities" -> result.success(capabilitiesPayload())
       "checkPermissions" -> checkPermissions(call, result)
       "requestPermissions" -> requestPermissions(call, result)
+      "shouldShowRequestRationale" -> shouldShowRequestRationale(call, result)
+      "openAppSettings" -> openAppSettings(result)
+      "openBluetoothSettings" -> openBluetoothSettings(result)
       "startScan" -> startScan(call, result)
       "stopScan" -> {
         stopActiveScan()
@@ -864,6 +869,49 @@ class OmniBlePlugin :
       androidPermissions.toTypedArray(),
       REQUEST_CODE_PERMISSIONS,
     )
+  }
+
+  private fun shouldShowRequestRationale(
+    call: MethodCall,
+    result: MethodChannel.Result,
+  ) {
+    val permissions = parseRequestedPermissions(call.arguments)
+    if (permissions == null) {
+      result.error(
+        "invalid-argument",
+        "`permissions` must be a list containing only `scan`, `connect`, or `advertise`.",
+        null,
+      )
+      return
+    }
+
+    replySuccess(result, permissionRationalePayload(permissions))
+  }
+
+  private fun openAppSettings(result: MethodChannel.Result) {
+    val context = applicationContext
+    if (context == null) {
+      result.error("unavailable", "Android context is not attached.", null)
+      return
+    }
+
+    val intent =
+      Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS)
+        .setData(Uri.fromParts("package", context.packageName, null))
+        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+    replySuccess(result, launchSettingsIntent(context, intent))
+  }
+
+  private fun openBluetoothSettings(result: MethodChannel.Result) {
+    val context = applicationContext
+    if (context == null) {
+      result.error("unavailable", "Android context is not attached.", null)
+      return
+    }
+
+    val intent =
+      Intent(Settings.ACTION_BLUETOOTH_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+    replySuccess(result, launchSettingsIntent(context, intent))
   }
 
   private fun supportsBleCentral(): Boolean {
@@ -3390,6 +3438,17 @@ class OmniBlePlugin :
     )
   }
 
+  private fun permissionRationalePayload(permissions: List<String>): Map<String, Any?> {
+    val rationale =
+      linkedMapOf<String, Boolean>().apply {
+        permissions.forEach { permission ->
+          this[permission] = shouldShowPermissionRationale(permission)
+        }
+      }
+
+    return mapOf("permissions" to rationale)
+  }
+
   private fun permissionState(permission: String): String {
     val context = applicationContext ?: return "denied"
     val androidPermissions = requiredAndroidPermissions(permission) ?: return "denied"
@@ -3400,8 +3459,35 @@ class OmniBlePlugin :
     val allGranted =
       androidPermissions.all { androidPermission ->
         ContextCompat.checkSelfPermission(context, androidPermission) == PackageManager.PERMISSION_GRANTED
-      }
+    }
     return if (allGranted) "granted" else "denied"
+  }
+
+  private fun shouldShowPermissionRationale(permission: String): Boolean {
+    val context = applicationContext ?: return false
+    val attachedActivity = activity ?: return false
+    val androidPermissions = requiredAndroidPermissions(permission) ?: return false
+    if (androidPermissions.isEmpty()) {
+      return false
+    }
+
+    return androidPermissions.any { androidPermission ->
+      ContextCompat.checkSelfPermission(context, androidPermission) != PackageManager.PERMISSION_GRANTED &&
+        ActivityCompat.shouldShowRequestPermissionRationale(attachedActivity, androidPermission)
+    }
+  }
+
+  private fun launchSettingsIntent(context: Context, intent: Intent): Boolean {
+    return try {
+      if (intent.resolveActivity(context.packageManager) == null) {
+        false
+      } else {
+        context.startActivity(intent)
+        true
+      }
+    } catch (_: RuntimeException) {
+      false
+    }
   }
 
   private fun requiredAndroidPermissions(permission: String): List<String>? {

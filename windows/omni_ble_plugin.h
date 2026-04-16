@@ -40,6 +40,8 @@ class OmniBlePlugin : public flutter::Plugin {
   flutter::EncodableMap CapabilitiesPayload() const;
   flutter::EncodableMap PermissionStatusPayload(
       const flutter::EncodableValue* arguments) const;
+  flutter::EncodableMap PermissionRationalePayload(
+      const flutter::EncodableValue* arguments) const;
   std::string CurrentAdapterState() const;
   void RefreshRadioSubscription();
   void ClearRadioSubscription();

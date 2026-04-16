@@ -57,6 +57,38 @@ class MethodChannelOmniBle extends OmniBlePlatform {
   }
 
   @override
+  Future<Map<OmniBlePermission, bool>> shouldShowRequestRationale(
+    Set<OmniBlePermission> permissions,
+  ) async {
+    final response = await _invokeMap('shouldShowRequestRationale', {
+      'permissions': permissions.map((permission) => permission.value).toList(),
+    });
+    final rationaleMap = response['permissions'] is Map
+        ? Map<Object?, Object?>.from(response['permissions'] as Map)
+        : const <Object?, Object?>{};
+    return rationaleMap.map(
+      (key, value) => MapEntry(
+        OmniBlePermission.values.firstWhere(
+          (permission) => permission.value == key.toString(),
+          orElse: () =>
+              throw ArgumentError.value(key, 'key', 'Unknown BLE permission.'),
+        ),
+        value == true,
+      ),
+    );
+  }
+
+  @override
+  Future<bool> openAppSettings() {
+    return _invokeBool('openAppSettings');
+  }
+
+  @override
+  Future<bool> openBluetoothSettings() {
+    return _invokeBool('openBluetoothSettings');
+  }
+
+  @override
   Future<void> startScan(OmniBleScanConfig config) {
     return _invokeVoid('startScan', config.toMap());
   }
@@ -142,6 +174,36 @@ class MethodChannelOmniBle extends OmniBlePlatform {
       throw OmniBleException(
         code: 'invalid-response',
         message: 'Expected a number from `$method`, but received $response.',
+      );
+    } on PlatformException catch (error) {
+      throw OmniBleException(
+        code: error.code,
+        message: error.message ?? 'Native platform call failed.',
+        details: error.details,
+      );
+    } on MissingPluginException {
+      throw OmniBleException(
+        code: 'unimplemented',
+        message: 'The native method `$method` has not been implemented yet.',
+      );
+    }
+  }
+
+  Future<bool> _invokeBool(
+    String method, [
+    Map<String, Object?>? arguments,
+  ]) async {
+    try {
+      final response = await methodChannel.invokeMethod<Object?>(
+        method,
+        arguments,
+      );
+      if (response is bool) {
+        return response;
+      }
+      throw OmniBleException(
+        code: 'invalid-response',
+        message: 'Expected a bool from `$method`, but received $response.',
       );
     } on PlatformException catch (error) {
       throw OmniBleException(

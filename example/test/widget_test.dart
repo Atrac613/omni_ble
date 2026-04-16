@@ -34,6 +34,15 @@ void main() {
               'allGranted': true,
             };
           }
+          if (methodCall.method == 'shouldShowRequestRationale') {
+            return {
+              'permissions': {
+                'scan': false,
+                'connect': false,
+                'advertise': false,
+              },
+            };
+          }
           return null;
         });
   });
