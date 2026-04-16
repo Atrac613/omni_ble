@@ -92,6 +92,33 @@ class MethodChannelOmniBle extends OmniBlePlatform {
   }
 
   @override
+  Future<int> readRssi(String deviceId) async {
+    try {
+      final response = await methodChannel.invokeMethod<Object?>('readRssi', {
+        'deviceId': deviceId,
+      });
+      if (response is num) {
+        return response.toInt();
+      }
+      throw OmniBleException(
+        code: 'invalid-response',
+        message: 'Expected a number from `readRssi`, but received $response.',
+      );
+    } on PlatformException catch (error) {
+      throw OmniBleException(
+        code: error.code,
+        message: error.message ?? 'Native platform call failed.',
+        details: error.details,
+      );
+    } on MissingPluginException {
+      throw OmniBleException(
+        code: 'unimplemented',
+        message: 'The native method `readRssi` has not been implemented yet.',
+      );
+    }
+  }
+
+  @override
   Future<Uint8List> readCharacteristic(
     OmniBleCharacteristicAddress address,
   ) async {

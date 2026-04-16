@@ -86,6 +86,8 @@ public class OmniBlePlugin: NSObject, FlutterPlugin, FlutterStreamHandler, CBCen
       disconnect(arguments: call.arguments, result: result)
     case "discoverServices":
       discoverServices(arguments: call.arguments, result: result)
+    case "readRssi":
+      readRssi(arguments: call.arguments, result: result)
     case "readCharacteristic":
       readCharacteristic(arguments: call.arguments, result: result)
     case "readDescriptor":
@@ -328,6 +330,31 @@ public class OmniBlePlugin: NSObject, FlutterPlugin, FlutterStreamHandler, CBCen
     }
 
     finishServiceDiscovery(identifier: identifier, services: services)
+  }
+
+  public func peripheral(
+    _ peripheral: CBPeripheral,
+    didReadRSSI RSSI: NSNumber,
+    error: Error?
+  ) {
+    let operationKey = rssiOperationKey(deviceIdentifier: peripheral.identifier)
+
+    guard let pendingResult = pendingReadResults.removeValue(forKey: operationKey) else {
+      return
+    }
+
+    if let error {
+      pendingResult(
+        FlutterError(
+          code: "read-failed",
+          message: error.localizedDescription,
+          details: nil
+        )
+      )
+      return
+    }
+
+    pendingResult(RSSI.intValue)
   }
 
   public func peripheral(
@@ -884,6 +911,49 @@ public class OmniBlePlugin: NSObject, FlutterPlugin, FlutterStreamHandler, CBCen
     pendingDiscoveryResults[identifier] = result
     characteristicCache[identifier] = [:]
     peripheral.discoverServices(nil)
+  }
+
+  private func readRssi(arguments: Any?, result: @escaping FlutterResult) {
+    guard
+      let payload = arguments as? [String: Any],
+      let deviceId = payload["deviceId"] as? String,
+      let identifier = UUID(uuidString: deviceId)
+    else {
+      result(
+        FlutterError(
+          code: "invalid-argument",
+          message: "`deviceId` is required to read RSSI.",
+          details: nil
+        )
+      )
+      return
+    }
+
+    guard let peripheral = connectedPeripheral(identifier: identifier) else {
+      result(
+        FlutterError(
+          code: "not-connected",
+          message: "Bluetooth device must be connected before reading RSSI.",
+          details: nil
+        )
+      )
+      return
+    }
+
+    let operationKey = rssiOperationKey(deviceIdentifier: identifier)
+    guard pendingReadResults[operationKey] == nil else {
+      result(
+        FlutterError(
+          code: "busy",
+          message: "Bluetooth RSSI read is already in progress for this device.",
+          details: nil
+        )
+      )
+      return
+    }
+
+    pendingReadResults[operationKey] = result
+    peripheral.readRSSI()
   }
 
   private func readCharacteristic(arguments: Any?, result: @escaping FlutterResult) {
@@ -2113,6 +2183,10 @@ public class OmniBlePlugin: NSObject, FlutterPlugin, FlutterStreamHandler, CBCen
   ) -> String {
     return
       "\(deviceIdentifier.uuidString.lowercased())|\(serviceUuid.lowercased())|\(characteristicUuid.lowercased())"
+  }
+
+  private func rssiOperationKey(deviceIdentifier: UUID) -> String {
+    return "\(characteristicOperationPrefix(deviceIdentifier: deviceIdentifier))rssi"
   }
 
   private func descriptorOperationKey(

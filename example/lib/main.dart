@@ -211,7 +211,7 @@ class _OmniBleHomePageState extends State<OmniBleHomePage> {
                 capabilities.supports(OmniBleFeature.gattClient)
                     ? capabilities.platform == 'android'
                           ? 'Central and peripheral BLE operations are implemented on Android too. Runtime Bluetooth permission still has to be granted, and this example can request it through the plugin API.'
-                          : 'Central and peripheral BLE operations are currently implemented on Apple platforms and Android. Other targets still expose the scaffold only.'
+                          : 'Central and peripheral BLE operations, including connected RSSI reads, are currently implemented on Apple platforms and Android. Other targets still expose the scaffold only.'
                     : capabilities.supports(OmniBleFeature.scanning)
                     ? 'Central scanning is implemented, but the rest of the GATT client surface is still being filled in for this target.'
                     : 'This target currently exposes the scaffold only. Native BLE backends still need to be implemented.',
@@ -315,7 +315,7 @@ class _OmniBleHomePageState extends State<OmniBleHomePage> {
                   padding: EdgeInsets.all(16),
                   child: Text(
                     'Permissions: check/request BLE runtime permissions\n'
-                    'Central: startScan, connect, discoverServices, read/write, setNotification, characteristic events\n'
+                    'Central: startScan, connect, readRssi, discoverServices, read/write, setNotification, characteristic events\n'
                     'Peripheral: publishGattDatabase, startAdvertising, notifyCharacteristicValue, request events, respondToReadRequest/respondToWriteRequest',
                   ),
                 ),

@@ -114,6 +114,7 @@ class OmniBlePlugin :
 
   private companion object {
     const val OP_DISCOVER_SERVICES = "discoverServices"
+    const val OP_READ_RSSI = "readRssi"
     const val OP_READ_CHARACTERISTIC = "readCharacteristic"
     const val OP_READ_DESCRIPTOR = "readDescriptor"
     const val OP_WRITE_CHARACTERISTIC = "writeCharacteristic"
@@ -227,6 +228,29 @@ class OmniBlePlugin :
           operation.result,
           gatt.services.map(::servicePayload),
         )
+      }
+
+      override fun onReadRemoteRssi(gatt: BluetoothGatt, rssi: Int, status: Int) {
+        val deviceId = normalizeDeviceId(gatt.device.address)
+        val connection = connections[deviceId] ?: return
+        val operation = connection.activeOperation
+
+        if (operation?.type != OP_READ_RSSI || operation.key != deviceId) {
+          return
+        }
+
+        connection.activeOperation = null
+        if (status != BluetoothGatt.GATT_SUCCESS) {
+          replyError(
+            operation.result,
+            "read-failed",
+            "Bluetooth RSSI read failed with status $status.",
+            mapOf("status" to status),
+          )
+          return
+        }
+
+        replySuccess(operation.result, rssi)
       }
 
       @Suppress("DEPRECATION")
@@ -593,6 +617,7 @@ class OmniBlePlugin :
       "connect" -> connect(call, result)
       "disconnect" -> disconnect(call, result)
       "discoverServices" -> discoverServices(call, result)
+      "readRssi" -> readRssi(call, result)
       "readCharacteristic" -> readCharacteristic(call, result)
       "readDescriptor" -> readDescriptor(call, result)
       "writeCharacteristic" -> writeCharacteristic(call, result)
@@ -1080,6 +1105,74 @@ class OmniBlePlugin :
       if (!gatt.discoverServices()) {
         connection.activeOperation = null
         result.error("discovery-failed", "Bluetooth service discovery could not start.", null)
+      }
+    } catch (error: SecurityException) {
+      connection.activeOperation = null
+      result.error(
+        "permission-denied",
+        error.message ?: "Bluetooth connect permission is missing on Android.",
+        missingPermissions,
+      )
+    }
+  }
+
+  @SuppressLint("MissingPermission")
+  private fun readRssi(call: MethodCall, result: MethodChannel.Result) {
+    val context = applicationContext
+    if (context == null) {
+      result.error("unavailable", "Android context is not attached.", null)
+      return
+    }
+
+    val missingPermissions = missingConnectionPermissions(context)
+    if (missingPermissions.isNotEmpty()) {
+      result.error(
+        "permission-denied",
+        "Bluetooth connect permission is missing on Android.",
+        missingPermissions,
+      )
+      return
+    }
+
+    val payload = call.arguments as? Map<*, *>
+    val deviceId = (payload?.get("deviceId") as? String)?.let(::normalizeDeviceId)
+    if (deviceId == null) {
+      result.error("invalid-argument", "`deviceId` is required to read RSSI.", null)
+      return
+    }
+
+    val connection = connectedConnection(deviceId)
+    if (connection == null) {
+      result.error(
+        "not-connected",
+        "Bluetooth device must be connected before reading RSSI.",
+        null,
+      )
+      return
+    }
+
+    if (connection.activeOperation != null) {
+      result.error("busy", "Another Bluetooth GATT operation is already in progress.", null)
+      return
+    }
+
+    val gatt = connection.gatt
+    if (gatt == null) {
+      result.error("not-connected", "Bluetooth GATT is not available.", null)
+      return
+    }
+
+    connection.activeOperation =
+      PendingOperation(
+        type = OP_READ_RSSI,
+        key = deviceId,
+        result = result,
+      )
+
+    try {
+      if (!gatt.readRemoteRssi()) {
+        connection.activeOperation = null
+        result.error("read-failed", "Bluetooth RSSI read could not start.", null)
       }
     } catch (error: SecurityException) {
       connection.activeOperation = null

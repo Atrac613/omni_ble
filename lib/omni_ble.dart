@@ -63,6 +63,10 @@ class OmniBleCentral {
     return _platform.discoverServices(deviceId);
   }
 
+  Future<int> readRssi(String deviceId) {
+    return _platform.readRssi(deviceId);
+  }
+
   Future<Uint8List> readCharacteristic(OmniBleCharacteristicAddress address) {
     return _platform.readCharacteristic(address);
   }

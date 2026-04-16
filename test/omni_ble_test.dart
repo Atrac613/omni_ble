@@ -68,6 +68,11 @@ class MockOmniBlePlatform
   }
 
   @override
+  Future<int> readRssi(String deviceId) async {
+    return -64;
+  }
+
+  @override
   Future<Uint8List> readCharacteristic(
     OmniBleCharacteristicAddress address,
   ) async {
@@ -200,6 +205,16 @@ void main() {
     );
 
     expect(value, Uint8List.fromList([4, 5, 6]));
+  });
+
+  test('central.readRssi forwards device id', () async {
+    const omniBlePlugin = OmniBle();
+    final fakePlatform = MockOmniBlePlatform();
+    OmniBlePlatform.instance = fakePlatform;
+
+    final rssi = await omniBlePlugin.central.readRssi('device-1');
+
+    expect(rssi, -64);
   });
 
   test('OmniBleEvent parses connection state changes', () {

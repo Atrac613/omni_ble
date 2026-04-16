@@ -30,6 +30,8 @@ void main() {
                 'permissions': {'scan': 'granted', 'connect': 'granted'},
                 'allGranted': true,
               };
+            case 'readRssi':
+              return -58;
             case 'readCharacteristic':
               return Uint8List.fromList([1, 2, 3]);
             case 'readDescriptor':
@@ -106,6 +108,14 @@ void main() {
       'serviceUuids': ['180D'],
       'allowDuplicates': true,
     });
+  });
+
+  test('readRssi decodes integer payload', () async {
+    final rssi = await platform.readRssi('device-1');
+
+    expect(rssi, -58);
+    expect(lastCall?.method, 'readRssi');
+    expect(lastCall?.arguments, {'deviceId': 'device-1'});
   });
 
   test('readCharacteristic decodes bytes', () async {

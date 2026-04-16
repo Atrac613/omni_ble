@@ -48,6 +48,8 @@ abstract class OmniBlePlatform extends PlatformInterface {
 
   Future<List<OmniBleGattService>> discoverServices(String deviceId);
 
+  Future<int> readRssi(String deviceId);
+
   Future<Uint8List> readCharacteristic(OmniBleCharacteristicAddress address);
 
   Future<Uint8List> readDescriptor(OmniBleDescriptorAddress address);
