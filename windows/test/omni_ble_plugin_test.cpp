@@ -42,5 +42,50 @@ TEST(OmniBlePlugin, GetPlatformVersion) {
   EXPECT_EQ(std::get<std::string>(features[1]), "scanning");
 }
 
+TEST(OmniBlePlugin, ConnectRequiresDeviceId) {
+  OmniBlePlugin plugin;
+  std::string error_code;
+  std::string error_message;
+  plugin.HandleMethodCall(
+      MethodCall("connect", std::make_unique<EncodableValue>(EncodableMap{})),
+      std::make_unique<MethodResultFunctions<>>(
+          nullptr,
+          [&error_code, &error_message](const std::string& code,
+                                        const std::string& message,
+                                        const flutter::EncodableValue* details) {
+            error_code = code;
+            error_message = message;
+          },
+          nullptr));
+
+  EXPECT_EQ(error_code, "invalid-argument");
+  EXPECT_EQ(error_message, "`deviceId` is required to connect.");
+}
+
+TEST(OmniBlePlugin, DiscoverServicesRequiresConnection) {
+  OmniBlePlugin plugin;
+  std::string error_code;
+  std::string error_message;
+  EncodableMap arguments;
+  arguments[EncodableValue("deviceId")] =
+      EncodableValue("AA:BB:CC:DD:EE:FF");
+  plugin.HandleMethodCall(
+      MethodCall("discoverServices",
+                 std::make_unique<EncodableValue>(arguments)),
+      std::make_unique<MethodResultFunctions<>>(
+          nullptr,
+          [&error_code, &error_message](const std::string& code,
+                                        const std::string& message,
+                                        const flutter::EncodableValue* details) {
+            error_code = code;
+            error_message = message;
+          },
+          nullptr));
+
+  EXPECT_EQ(error_code, "not-connected");
+  EXPECT_EQ(error_message,
+            "Bluetooth device must be connected before discovering services.");
+}
+
 }  // namespace test
 }  // namespace omni_ble

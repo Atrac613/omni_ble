@@ -9,13 +9,17 @@
 #include <flutter/event_stream_handler_functions.h>
 #include <flutter/standard_method_codec.h>
 
+#include <algorithm>
+#include <cctype>
 #include <iomanip>
 #include <memory>
 #include <optional>
 #include <sstream>
+#include <utility>
 #include <vector>
 
 #include <winrt/Windows.Devices.Bluetooth.h>
+#include <winrt/Windows.Devices.Bluetooth.GenericAttributeProfile.h>
 #include <winrt/Windows.Storage.Streams.h>
 
 namespace omni_ble {
@@ -23,13 +27,19 @@ namespace omni_ble {
 namespace {
 
 using BluetoothAdapter = winrt::Windows::Devices::Bluetooth::BluetoothAdapter;
+using BluetoothCacheMode = winrt::Windows::Devices::Bluetooth::BluetoothCacheMode;
+using BluetoothConnectionStatus = winrt::Windows::Devices::Bluetooth::BluetoothConnectionStatus;
 using BluetoothError = winrt::Windows::Devices::Bluetooth::BluetoothError;
+using BluetoothLEDevice = winrt::Windows::Devices::Bluetooth::BluetoothLEDevice;
 using BluetoothLEAdvertisement = winrt::Windows::Devices::Bluetooth::Advertisement::BluetoothLEAdvertisement;
 using BluetoothLEAdvertisementFilter = winrt::Windows::Devices::Bluetooth::Advertisement::BluetoothLEAdvertisementFilter;
 using BluetoothLEAdvertisementReceivedEventArgs = winrt::Windows::Devices::Bluetooth::Advertisement::BluetoothLEAdvertisementReceivedEventArgs;
 using BluetoothLEAdvertisementWatcher = winrt::Windows::Devices::Bluetooth::Advertisement::BluetoothLEAdvertisementWatcher;
 using BluetoothLEAdvertisementWatcherStoppedEventArgs = winrt::Windows::Devices::Bluetooth::Advertisement::BluetoothLEAdvertisementWatcherStoppedEventArgs;
 using BluetoothLEScanningMode = winrt::Windows::Devices::Bluetooth::Advertisement::BluetoothLEScanningMode;
+using GattCharacteristicProperties = winrt::Windows::Devices::Bluetooth::GenericAttributeProfile::GattCharacteristicProperties;
+using GattCommunicationStatus = winrt::Windows::Devices::Bluetooth::GenericAttributeProfile::GattCommunicationStatus;
+using GattDescriptor = winrt::Windows::Devices::Bluetooth::GenericAttributeProfile::GattDescriptor;
 using Radio = winrt::Windows::Devices::Radios::Radio;
 using RadioState = winrt::Windows::Devices::Radios::RadioState;
 using DataReader = winrt::Windows::Storage::Streams::DataReader;
@@ -67,6 +77,91 @@ std::optional<Radio> TryGetBluetoothRadio() {
   } catch (...) {
     return std::nullopt;
   }
+}
+
+const flutter::EncodableMap* ArgumentMap(
+    const flutter::EncodableValue* arguments) {
+  if (arguments == nullptr ||
+      !std::holds_alternative<flutter::EncodableMap>(*arguments)) {
+    return nullptr;
+  }
+  return &std::get<flutter::EncodableMap>(*arguments);
+}
+
+std::optional<std::string> GetStringArgument(
+    const flutter::EncodableValue* arguments,
+    const char* key) {
+  const auto* map = ArgumentMap(arguments);
+  if (map == nullptr) {
+    return std::nullopt;
+  }
+  const auto iterator = map->find(flutter::EncodableValue(key));
+  if (iterator == map->end() ||
+      !std::holds_alternative<std::string>(iterator->second)) {
+    return std::nullopt;
+  }
+  return std::get<std::string>(iterator->second);
+}
+
+std::string GattStatusErrorCode(const GattCommunicationStatus status) {
+  switch (status) {
+    case GattCommunicationStatus::AccessDenied:
+      return "permission-denied";
+    case GattCommunicationStatus::Unreachable:
+      return "unavailable";
+    case GattCommunicationStatus::ProtocolError:
+      return "communication-error";
+    case GattCommunicationStatus::Success:
+      return "";
+    default:
+      return "gatt-failed";
+  }
+}
+
+std::string GattStatusMessage(const char* operation,
+                              const GattCommunicationStatus status) {
+  switch (status) {
+    case GattCommunicationStatus::AccessDenied:
+      return std::string("Bluetooth access was denied while trying to ") +
+             operation + ".";
+    case GattCommunicationStatus::Unreachable:
+      return std::string("Bluetooth device was unreachable while trying to ") +
+             operation + ".";
+    case GattCommunicationStatus::ProtocolError:
+      return std::string("Bluetooth GATT protocol error while trying to ") +
+             operation + ".";
+    case GattCommunicationStatus::Success:
+      return "";
+    default:
+      return std::string("Bluetooth operation failed while trying to ") +
+             operation + ".";
+  }
+}
+
+flutter::EncodableList CharacteristicPropertiesPayload(
+    const GattCharacteristicProperties properties) {
+  flutter::EncodableList payload;
+  if ((properties & GattCharacteristicProperties::Read) !=
+      GattCharacteristicProperties::None) {
+    payload.emplace_back("read");
+  }
+  if ((properties & GattCharacteristicProperties::Write) !=
+      GattCharacteristicProperties::None) {
+    payload.emplace_back("write");
+  }
+  if ((properties & GattCharacteristicProperties::WriteWithoutResponse) !=
+      GattCharacteristicProperties::None) {
+    payload.emplace_back("writeWithoutResponse");
+  }
+  if ((properties & GattCharacteristicProperties::Notify) !=
+      GattCharacteristicProperties::None) {
+    payload.emplace_back("notify");
+  }
+  if ((properties & GattCharacteristicProperties::Indicate) !=
+      GattCharacteristicProperties::None) {
+    payload.emplace_back("indicate");
+  }
+  return payload;
 }
 
 }  // namespace
@@ -120,6 +215,14 @@ OmniBlePlugin::OmniBlePlugin() {
 
 OmniBlePlugin::~OmniBlePlugin() {
   StopScan(nullptr);
+  std::vector<std::string> connected_device_ids;
+  connected_device_ids.reserve(connections_.size());
+  for (const auto& entry : connections_) {
+    connected_device_ids.push_back(entry.first);
+  }
+  for (const auto& device_id : connected_device_ids) {
+    ClearConnection(device_id);
+  }
   ClearRadioSubscription();
 }
 
@@ -282,6 +385,21 @@ void OmniBlePlugin::EmitScanError(int error_code, const std::string& message) {
     event[flutter::EncodableValue("message")] =
         flutter::EncodableValue(message);
   }
+  event_sink_->Success(flutter::EncodableValue(event));
+}
+
+void OmniBlePlugin::EmitConnectionState(const std::string& device_id,
+                                        const std::string& state) {
+  if (!event_sink_) {
+    return;
+  }
+
+  flutter::EncodableMap event;
+  event[flutter::EncodableValue("type")] =
+      flutter::EncodableValue("connectionStateChanged");
+  event[flutter::EncodableValue("deviceId")] =
+      flutter::EncodableValue(device_id);
+  event[flutter::EncodableValue("state")] = flutter::EncodableValue(state);
   event_sink_->Success(flutter::EncodableValue(event));
 }
 
@@ -461,6 +579,364 @@ void OmniBlePlugin::StopScan(
   }
 }
 
+void OmniBlePlugin::Connect(
+    const flutter::EncodableValue* arguments,
+    std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>> result) {
+  if (CurrentAdapterState() != "poweredOn") {
+    flutter::EncodableMap details;
+    details[flutter::EncodableValue("state")] =
+        flutter::EncodableValue(CurrentAdapterState());
+    result->Error("adapter-unavailable",
+                  "Bluetooth adapter must be powered on before connecting.",
+                  flutter::EncodableValue(details));
+    return;
+  }
+
+  const auto device_id = GetStringArgument(arguments, "deviceId");
+  if (!device_id.has_value() || device_id->empty()) {
+    result->Error("invalid-argument", "`deviceId` is required to connect.");
+    return;
+  }
+
+  auto* existing_connection = FindConnection(*device_id);
+  if (existing_connection != nullptr &&
+      existing_connection->state == "connected" && existing_connection->device) {
+    result->Success();
+    return;
+  }
+  if (existing_connection != nullptr &&
+      existing_connection->state == "connecting") {
+    result->Error("busy",
+                  "Bluetooth connection is already in progress for this device.");
+    return;
+  }
+  if (existing_connection != nullptr) {
+    ClearConnection(*device_id);
+  }
+
+  EmitConnectionState(*device_id, "connecting");
+
+  try {
+    const auto bluetooth_address = ParseBluetoothAddress(*device_id);
+    if (bluetooth_address == 0) {
+      result->Error(
+          "invalid-argument",
+          "`deviceId` must be a 48-bit Bluetooth address such as `AA:BB:CC:DD:EE:FF`.");
+      EmitConnectionState(*device_id, "disconnected");
+      return;
+    }
+
+    const auto device =
+        BluetoothLEDevice::FromBluetoothAddressAsync(bluetooth_address).get();
+    if (!device) {
+      const auto message =
+          "Bluetooth device `" + *device_id +
+          "` is not available. Scan first or reconnect to a known device.";
+      result->Error(
+          "unavailable", message);
+      EmitConnectionState(*device_id, "disconnected");
+      return;
+    }
+
+    ConnectionContext context;
+    context.device = device;
+    context.state = "connecting";
+    context.connection_status_token_ = device.ConnectionStatusChanged(
+        [this](const BluetoothLEDevice& sender, const auto&) {
+          HandleConnectionStatusChanged(sender);
+        });
+    context.connection_status_active = true;
+    connections_.insert_or_assign(*device_id, std::move(context));
+
+    auto* connection = FindConnection(*device_id);
+    std::string error_code;
+    std::string error_message;
+    if (connection == nullptr ||
+        !RefreshGattCache(connection, error_code, error_message)) {
+      ClearConnection(*device_id);
+      result->Error("connection-failed",
+                    error_message.empty()
+                        ? "Bluetooth connection could not be established."
+                        : error_message);
+      EmitConnectionState(*device_id, "disconnected");
+      return;
+    }
+
+    connection->state = "connected";
+    result->Success();
+    EmitConnectionState(*device_id, "connected");
+  } catch (const winrt::hresult_error& error) {
+    ClearConnection(*device_id);
+    result->Error("connection-failed", winrt::to_string(error.message()));
+    EmitConnectionState(*device_id, "disconnected");
+  }
+}
+
+void OmniBlePlugin::Disconnect(
+    const flutter::EncodableValue* arguments,
+    std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>> result) {
+  const auto device_id = GetStringArgument(arguments, "deviceId");
+  if (!device_id.has_value() || device_id->empty()) {
+    result->Error("invalid-argument", "`deviceId` is required to disconnect.");
+    return;
+  }
+
+  auto* connection = FindConnection(*device_id);
+  if (connection == nullptr || !connection->device ||
+      connection->state == "disconnected") {
+    ClearConnection(*device_id);
+    result->Success();
+    return;
+  }
+
+  if (connection->state == "disconnecting") {
+    result->Error(
+        "busy",
+        "Bluetooth disconnection is already in progress for this device.");
+    return;
+  }
+
+  connection->state = "disconnecting";
+  EmitConnectionState(*device_id, "disconnecting");
+  ClearConnection(*device_id);
+  EmitConnectionState(*device_id, "disconnected");
+  result->Success();
+}
+
+void OmniBlePlugin::DiscoverServices(
+    const flutter::EncodableValue* arguments,
+    std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>> result) {
+  const auto device_id = GetStringArgument(arguments, "deviceId");
+  if (!device_id.has_value() || device_id->empty()) {
+    result->Error("invalid-argument",
+                  "`deviceId` is required to discover services.");
+    return;
+  }
+
+  auto* connection = FindConnectedConnection(*device_id);
+  if (connection == nullptr) {
+    result->Error(
+        "not-connected",
+        "Bluetooth device must be connected before discovering services.");
+    return;
+  }
+
+  std::string error_code;
+  std::string error_message;
+  if (!RefreshGattCache(connection, error_code, error_message)) {
+    result->Error(error_code.empty() ? "discovery-failed" : error_code,
+                  error_message.empty()
+                      ? "Bluetooth service discovery failed."
+                      : error_message);
+    return;
+  }
+
+  result->Success(flutter::EncodableValue(ServicesPayload(*connection)));
+}
+
+void OmniBlePlugin::HandleConnectionStatusChanged(
+    const BluetoothLEDevice& device) {
+  try {
+    if (!device ||
+        device.ConnectionStatus() != BluetoothConnectionStatus::Disconnected) {
+      return;
+    }
+
+    const auto device_id = FormatBluetoothAddress(device.BluetoothAddress());
+    if (device_id.empty()) {
+      return;
+    }
+
+    ClearConnection(device_id);
+    EmitConnectionState(device_id, "disconnected");
+  } catch (...) {
+  }
+}
+
+ConnectionContext* OmniBlePlugin::FindConnection(const std::string& device_id) {
+  const auto iterator = connections_.find(device_id);
+  if (iterator == connections_.end()) {
+    return nullptr;
+  }
+  return &iterator->second;
+}
+
+ConnectionContext* OmniBlePlugin::FindConnectedConnection(
+    const std::string& device_id) {
+  auto* connection = FindConnection(device_id);
+  if (connection == nullptr || !connection->device ||
+      connection->state != "connected") {
+    return nullptr;
+  }
+  return connection;
+}
+
+bool OmniBlePlugin::RefreshGattCache(ConnectionContext* connection,
+                                     std::string& error_code,
+                                     std::string& error_message) {
+  if (connection == nullptr || !connection->device) {
+    error_code = "not-connected";
+    error_message =
+        "Bluetooth device must be connected before discovering services.";
+    return false;
+  }
+
+  connection->services.clear();
+
+  try {
+    const auto services_result =
+        connection->device.GetGattServicesAsync(BluetoothCacheMode::Uncached)
+            .get();
+    if (services_result.Status() != GattCommunicationStatus::Success) {
+      error_code = GattStatusErrorCode(services_result.Status());
+      error_message =
+          GattStatusMessage("discover services", services_result.Status());
+      return false;
+    }
+
+    for (const auto& service : services_result.Services()) {
+      CachedGattService cached_service;
+      cached_service.service = service;
+
+      try {
+        const auto characteristics_result =
+            service.GetCharacteristicsAsync(BluetoothCacheMode::Uncached).get();
+        if (characteristics_result.Status() ==
+            GattCommunicationStatus::Success) {
+          for (const auto& characteristic :
+               characteristics_result.Characteristics()) {
+            CachedGattCharacteristic cached_characteristic;
+            cached_characteristic.characteristic = characteristic;
+
+            try {
+              const auto descriptors_result =
+                  characteristic.GetDescriptorsAsync(BluetoothCacheMode::Uncached)
+                      .get();
+              if (descriptors_result.Status() ==
+                  GattCommunicationStatus::Success) {
+                for (const auto& descriptor :
+                     descriptors_result.Descriptors()) {
+                  cached_characteristic.descriptors.insert_or_assign(
+                      GuidToString(descriptor.Uuid()), descriptor);
+                }
+              }
+            } catch (...) {
+            }
+
+            cached_service.characteristics.insert_or_assign(
+                GuidToString(characteristic.Uuid()),
+                std::move(cached_characteristic));
+          }
+        }
+      } catch (...) {
+      }
+
+      connection->services.insert_or_assign(GuidToString(service.Uuid()),
+                                            std::move(cached_service));
+    }
+
+    return true;
+  } catch (const winrt::hresult_error& error) {
+    error_code = "discovery-failed";
+    error_message = winrt::to_string(error.message());
+    connection->services.clear();
+    return false;
+  }
+}
+
+void OmniBlePlugin::ClearConnection(const std::string& device_id) {
+  auto iterator = connections_.find(device_id);
+  if (iterator == connections_.end()) {
+    return;
+  }
+
+  auto& connection = iterator->second;
+  for (auto& service_entry : connection.services) {
+    if (service_entry.second.service) {
+      try {
+        service_entry.second.service.Close();
+      } catch (...) {
+      }
+    }
+  }
+  connection.services.clear();
+
+  if (connection.connection_status_active && connection.device) {
+    try {
+      connection.device.ConnectionStatusChanged(
+          connection.connection_status_token_);
+    } catch (...) {
+    }
+    connection.connection_status_active = false;
+  }
+
+  if (connection.device) {
+    try {
+      connection.device.Close();
+    } catch (...) {
+    }
+  }
+
+  connections_.erase(iterator);
+}
+
+flutter::EncodableList OmniBlePlugin::ServicesPayload(
+    const ConnectionContext& connection) const {
+  flutter::EncodableList payload;
+  for (const auto& entry : connection.services) {
+    payload.emplace_back(ServicePayload(entry.second));
+  }
+  return payload;
+}
+
+flutter::EncodableMap OmniBlePlugin::ServicePayload(
+    const CachedGattService& service) const {
+  flutter::EncodableList characteristics;
+  for (const auto& entry : service.characteristics) {
+    characteristics.emplace_back(CharacteristicPayload(entry.second));
+  }
+
+  flutter::EncodableMap payload;
+  payload[flutter::EncodableValue("uuid")] =
+      flutter::EncodableValue(GuidToString(service.service.Uuid()));
+  payload[flutter::EncodableValue("primary")] = flutter::EncodableValue(true);
+  payload[flutter::EncodableValue("characteristics")] =
+      flutter::EncodableValue(characteristics);
+  return payload;
+}
+
+flutter::EncodableMap OmniBlePlugin::CharacteristicPayload(
+    const CachedGattCharacteristic& characteristic) const {
+  flutter::EncodableList descriptors;
+  for (const auto& entry : characteristic.descriptors) {
+    descriptors.emplace_back(DescriptorPayload(entry.second));
+  }
+
+  flutter::EncodableMap payload;
+  payload[flutter::EncodableValue("uuid")] =
+      flutter::EncodableValue(GuidToString(characteristic.characteristic.Uuid()));
+  payload[flutter::EncodableValue("properties")] =
+      flutter::EncodableValue(CharacteristicPropertiesPayload(
+          characteristic.characteristic.CharacteristicProperties()));
+  payload[flutter::EncodableValue("permissions")] =
+      flutter::EncodableValue(flutter::EncodableList());
+  payload[flutter::EncodableValue("descriptors")] =
+      flutter::EncodableValue(descriptors);
+  payload[flutter::EncodableValue("initialValue")] = flutter::EncodableValue();
+  return payload;
+}
+
+flutter::EncodableMap OmniBlePlugin::DescriptorPayload(
+    const GattDescriptor& descriptor) const {
+  flutter::EncodableMap payload;
+  payload[flutter::EncodableValue("uuid")] =
+      flutter::EncodableValue(GuidToString(descriptor.Uuid()));
+  payload[flutter::EncodableValue("permissions")] =
+      flutter::EncodableValue(flutter::EncodableList());
+  payload[flutter::EncodableValue("initialValue")] = flutter::EncodableValue();
+  return payload;
+}
+
 void OmniBlePlugin::OnStreamListen(std::unique_ptr<EventSink>&& events) {
   event_sink_ = std::move(events);
   RefreshRadioSubscription();
@@ -521,6 +997,20 @@ std::string OmniBlePlugin::FormatBluetoothAddress(uint64_t address) {
   return stream.str();
 }
 
+uint64_t OmniBlePlugin::ParseBluetoothAddress(const std::string& address) {
+  std::string normalized;
+  normalized.reserve(address.size());
+  for (const auto character : address) {
+    if (std::isxdigit(static_cast<unsigned char>(character))) {
+      normalized.push_back(character);
+    }
+  }
+  if (normalized.size() != 12) {
+    return 0;
+  }
+  return std::stoull(normalized, nullptr, 16);
+}
+
 void OmniBlePlugin::HandleMethodCall(
     const flutter::MethodCall<flutter::EncodableValue>& method_call,
     std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>> result) {
@@ -541,6 +1031,12 @@ void OmniBlePlugin::HandleMethodCall(
     StartScan(method_call.arguments(), std::move(result));
   } else if (method_call.method_name().compare("stopScan") == 0) {
     StopScan(std::move(result));
+  } else if (method_call.method_name().compare("connect") == 0) {
+    Connect(method_call.arguments(), std::move(result));
+  } else if (method_call.method_name().compare("disconnect") == 0) {
+    Disconnect(method_call.arguments(), std::move(result));
+  } else if (method_call.method_name().compare("discoverServices") == 0) {
+    DiscoverServices(method_call.arguments(), std::move(result));
   } else {
     result->NotImplemented();
   }
