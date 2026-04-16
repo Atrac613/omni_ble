@@ -35,7 +35,9 @@ class _OmniBleHomePageState extends State<OmniBleHomePage> {
   StreamSubscription<OmniBleEvent>? _eventsSubscription;
   OmniBleAdapterState _adapterState = OmniBleAdapterState.unknown;
   OmniBlePermissionStatus _permissionStatus = const OmniBlePermissionStatus();
+  Map<String, int> _connectedRssi = const {};
   bool _isScanning = false;
+  String? _rssiLoadingDeviceId;
   List<OmniBleScanResult> _scanResults = const [];
 
   @override
@@ -121,6 +123,31 @@ class _OmniBleHomePageState extends State<OmniBleHomePage> {
     }
   }
 
+  Future<bool> _ensureAndroidPermission(OmniBlePermission permission) async {
+    final permissionStatus = await _ble.permissions.request({permission});
+    if (!mounted) {
+      return false;
+    }
+    setState(() {
+      _permissionStatus = OmniBlePermissionStatus(
+        permissions: {
+          ..._permissionStatus.permissions,
+          ...permissionStatus.permissions,
+        },
+      );
+    });
+    return permissionStatus.isGranted(permission);
+  }
+
+  void _showError(OmniBleException error) {
+    if (!mounted) {
+      return;
+    }
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text('${error.code}: ${error.message}')));
+  }
+
   Future<void> _toggleScan(OmniBleCapabilities capabilities) async {
     if (!capabilities.supports(OmniBleFeature.scanning)) {
       return;
@@ -139,21 +166,13 @@ class _OmniBleHomePageState extends State<OmniBleHomePage> {
       }
 
       if (capabilities.platform == 'android') {
-        final permissionStatus = await _ble.permissions.request({
+        final isGranted = await _ensureAndroidPermission(
           OmniBlePermission.scan,
-        });
-        if (!mounted) {
-          return;
-        }
-        setState(() {
-          _permissionStatus = OmniBlePermissionStatus(
-            permissions: {
-              ..._permissionStatus.permissions,
-              ...permissionStatus.permissions,
-            },
-          );
-        });
-        if (!permissionStatus.isGranted(OmniBlePermission.scan)) {
+        );
+        if (!isGranted) {
+          if (!mounted) {
+            return;
+          }
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
               content: Text('Bluetooth scan permission was denied.'),
@@ -178,6 +197,72 @@ class _OmniBleHomePageState extends State<OmniBleHomePage> {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('${error.code}: ${error.message}')),
       );
+    }
+  }
+
+  Future<void> _readConnectedRssi(
+    OmniBleCapabilities capabilities,
+    OmniBleScanResult result,
+  ) async {
+    if (!capabilities.supports(OmniBleFeature.gattClient)) {
+      return;
+    }
+
+    if (capabilities.platform == 'android') {
+      final isGranted = await _ensureAndroidPermission(
+        OmniBlePermission.connect,
+      );
+      if (!isGranted) {
+        if (!mounted) {
+          return;
+        }
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Bluetooth connect permission was denied.'),
+          ),
+        );
+        return;
+      }
+    }
+
+    try {
+      setState(() {
+        _rssiLoadingDeviceId = result.deviceId;
+      });
+
+      await _ble.central.connect(
+        result.deviceId,
+        timeout: const Duration(seconds: 10),
+      );
+      final rssi = await _ble.central.readRssi(result.deviceId);
+
+      if (!mounted) {
+        return;
+      }
+
+      setState(() {
+        _connectedRssi = {..._connectedRssi, result.deviceId: rssi};
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            'Connected RSSI for ${result.name ?? result.deviceId}: $rssi dBm',
+          ),
+        ),
+      );
+    } on OmniBleException catch (error) {
+      _showError(error);
+    } finally {
+      try {
+        await _ble.central.disconnect(result.deviceId);
+      } on OmniBleException {
+        // Best-effort cleanup for the demo flow.
+      }
+      if (mounted) {
+        setState(() {
+          _rssiLoadingDeviceId = null;
+        });
+      }
     }
   }
 
@@ -294,10 +379,41 @@ class _OmniBleHomePageState extends State<OmniBleHomePage> {
                             for (final result in _scanResults.take(8))
                               Padding(
                                 padding: const EdgeInsets.only(bottom: 12),
-                                child: Text(
-                                  '${result.name ?? 'Unnamed'}\n'
-                                  '${result.deviceId}\n'
-                                  'RSSI ${result.rssi}',
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      '${result.name ?? 'Unnamed'}\n'
+                                      '${result.deviceId}\n'
+                                      'RSSI ${result.rssi}',
+                                    ),
+                                    const SizedBox(height: 8),
+                                    Text(
+                                      _connectedRssi.containsKey(
+                                            result.deviceId,
+                                          )
+                                          ? 'Connected RSSI ${_connectedRssi[result.deviceId]} dBm'
+                                          : 'Connected RSSI not read yet.',
+                                    ),
+                                    const SizedBox(height: 8),
+                                    FilledButton.tonal(
+                                      onPressed:
+                                          capabilities.supports(
+                                                OmniBleFeature.gattClient,
+                                              ) &&
+                                              _rssiLoadingDeviceId == null
+                                          ? () => _readConnectedRssi(
+                                              capabilities,
+                                              result,
+                                            )
+                                          : null,
+                                      child: Text(
+                                        _rssiLoadingDeviceId == result.deviceId
+                                            ? 'Reading RSSI...'
+                                            : 'Connect and read RSSI',
+                                      ),
+                                    ),
+                                  ],
                                 ),
                               ),
                           ],
