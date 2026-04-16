@@ -51,6 +51,36 @@ extension OmniBleWriteTypeValue on OmniBleWriteType {
   };
 }
 
+enum OmniBleConnectionPriority { balanced, high, lowPower }
+
+extension OmniBleConnectionPriorityValue on OmniBleConnectionPriority {
+  String get value => switch (this) {
+    OmniBleConnectionPriority.balanced => 'balanced',
+    OmniBleConnectionPriority.high => 'high',
+    OmniBleConnectionPriority.lowPower => 'lowPower',
+  };
+}
+
+enum OmniBlePhy { le1m, le2m, leCoded }
+
+extension OmniBlePhyValue on OmniBlePhy {
+  String get value => switch (this) {
+    OmniBlePhy.le1m => 'le1m',
+    OmniBlePhy.le2m => 'le2m',
+    OmniBlePhy.leCoded => 'leCoded',
+  };
+}
+
+enum OmniBlePhyCoding { unspecified, s2, s8 }
+
+extension OmniBlePhyCodingValue on OmniBlePhyCoding {
+  String get value => switch (this) {
+    OmniBlePhyCoding.unspecified => 'unspecified',
+    OmniBlePhyCoding.s2 => 's2',
+    OmniBlePhyCoding.s8 => 's8',
+  };
+}
+
 enum OmniBleAdvertisingMode { balanced, lowLatency, lowPower }
 
 extension OmniBleAdvertisingModeValue on OmniBleAdvertisingMode {
@@ -217,6 +247,23 @@ class OmniBleScanConfig {
 
   Map<String, Object?> toMap() {
     return {'serviceUuids': serviceUuids, 'allowDuplicates': allowDuplicates};
+  }
+}
+
+class OmniBleConnectionConfig {
+  const OmniBleConnectionConfig({
+    this.timeout,
+    this.androidAutoConnect = false,
+  });
+
+  final Duration? timeout;
+  final bool androidAutoConnect;
+
+  Map<String, Object?> toMap() {
+    return {
+      if (timeout != null) 'timeoutMs': timeout!.inMilliseconds,
+      'androidAutoConnect': androidAutoConnect,
+    };
   }
 }
 
@@ -503,6 +550,19 @@ sealed class OmniBleEvent {
             (map['state'] ?? 'disconnected').toString(),
           ),
         );
+      case OmniBleMtuChangedEvent.typeValue:
+        return OmniBleMtuChangedEvent(
+          deviceId: (map['deviceId'] ?? '').toString(),
+          mtu: _intOrNull(map['mtu']) ?? 0,
+          status: _intOrNull(map['status']),
+        );
+      case OmniBlePhyUpdatedEvent.typeValue:
+        return OmniBlePhyUpdatedEvent(
+          deviceId: (map['deviceId'] ?? '').toString(),
+          txPhy: _parsePhy((map['txPhy'] ?? OmniBlePhy.le1m.value).toString()),
+          rxPhy: _parsePhy((map['rxPhy'] ?? OmniBlePhy.le1m.value).toString()),
+          status: _intOrNull(map['status']),
+        );
       case OmniBleCharacteristicValueChanged.typeValue:
         return OmniBleCharacteristicValueChanged(
           address: OmniBleCharacteristicAddress(
@@ -584,6 +644,36 @@ final class OmniBleConnectionStateChanged extends OmniBleEvent {
 
   final String deviceId;
   final OmniBleConnectionState state;
+}
+
+final class OmniBleMtuChangedEvent extends OmniBleEvent {
+  const OmniBleMtuChangedEvent({
+    required this.deviceId,
+    required this.mtu,
+    this.status,
+  }) : super(typeValue);
+
+  static const typeValue = 'mtuChanged';
+
+  final String deviceId;
+  final int mtu;
+  final int? status;
+}
+
+final class OmniBlePhyUpdatedEvent extends OmniBleEvent {
+  const OmniBlePhyUpdatedEvent({
+    required this.deviceId,
+    required this.txPhy,
+    required this.rxPhy,
+    this.status,
+  }) : super(typeValue);
+
+  static const typeValue = 'phyUpdated';
+
+  final String deviceId;
+  final OmniBlePhy txPhy;
+  final OmniBlePhy rxPhy;
+  final int? status;
 }
 
 final class OmniBleCharacteristicValueChanged extends OmniBleEvent {
@@ -812,5 +902,12 @@ OmniBleConnectionState _parseConnectionState(String value) {
     (state) => state.value == value,
     orElse: () =>
         throw ArgumentError.value(value, 'value', 'Unknown connection state.'),
+  );
+}
+
+OmniBlePhy _parsePhy(String value) {
+  return OmniBlePhy.values.firstWhere(
+    (phy) => phy.value == value,
+    orElse: () => throw ArgumentError.value(value, 'value', 'Unknown PHY.'),
   );
 }

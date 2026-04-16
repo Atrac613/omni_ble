@@ -32,6 +32,8 @@ void main() {
               };
             case 'readRssi':
               return -58;
+            case 'requestMtu':
+              return 247;
             case 'readCharacteristic':
               return Uint8List.fromList([1, 2, 3]);
             case 'readDescriptor':
@@ -58,10 +60,13 @@ void main() {
                 },
               ];
             case 'connect':
-              throw PlatformException(
-                code: 'permission-denied',
-                message: 'No permission',
-              );
+              if (methodCall.arguments['deviceId'] == 'device-error') {
+                throw PlatformException(
+                  code: 'permission-denied',
+                  message: 'No permission',
+                );
+              }
+              return null;
             default:
               return null;
           }
@@ -116,6 +121,58 @@ void main() {
     expect(rssi, -58);
     expect(lastCall?.method, 'readRssi');
     expect(lastCall?.arguments, {'deviceId': 'device-1'});
+  });
+
+  test('connect encodes connection config payload', () async {
+    await platform.connect(
+      'device-1',
+      config: const OmniBleConnectionConfig(
+        timeout: Duration(seconds: 8),
+        androidAutoConnect: true,
+      ),
+    );
+
+    expect(lastCall?.method, 'connect');
+    expect(lastCall?.arguments, {
+      'deviceId': 'device-1',
+      'timeoutMs': 8000,
+      'androidAutoConnect': true,
+    });
+  });
+
+  test('requestMtu decodes integer payload', () async {
+    final mtu = await platform.requestMtu('device-1', mtu: 247);
+
+    expect(mtu, 247);
+    expect(lastCall?.method, 'requestMtu');
+    expect(lastCall?.arguments, {'deviceId': 'device-1', 'mtu': 247});
+  });
+
+  test('requestConnectionPriority encodes priority payload', () async {
+    await platform.requestConnectionPriority(
+      'device-1',
+      OmniBleConnectionPriority.high,
+    );
+
+    expect(lastCall?.method, 'requestConnectionPriority');
+    expect(lastCall?.arguments, {'deviceId': 'device-1', 'priority': 'high'});
+  });
+
+  test('setPreferredPhy encodes PHY payload', () async {
+    await platform.setPreferredPhy(
+      'device-1',
+      txPhy: OmniBlePhy.le2m,
+      rxPhy: OmniBlePhy.leCoded,
+      coding: OmniBlePhyCoding.s8,
+    );
+
+    expect(lastCall?.method, 'setPreferredPhy');
+    expect(lastCall?.arguments, {
+      'deviceId': 'device-1',
+      'txPhy': 'le2m',
+      'rxPhy': 'leCoded',
+      'coding': 's8',
+    });
   });
 
   test('readCharacteristic decodes bytes', () async {
@@ -280,7 +337,7 @@ void main() {
 
   test('platform exceptions are wrapped', () async {
     expect(
-      () => platform.connect('device-1'),
+      () => platform.connect('device-error'),
       throwsA(
         isA<OmniBleException>().having(
           (error) => error.code,

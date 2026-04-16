@@ -248,10 +248,30 @@ class _OmniBleHomePageState extends State<OmniBleHomePage> {
         _rssiLoadingDeviceId = result.deviceId;
       });
 
+      int? negotiatedMtu;
       await _ble.central.connect(
         result.deviceId,
-        timeout: const Duration(seconds: 10),
+        config: const OmniBleConnectionConfig(timeout: Duration(seconds: 10)),
       );
+      if (capabilities.platform == 'android') {
+        await _ble.central.requestConnectionPriority(
+          result.deviceId,
+          OmniBleConnectionPriority.high,
+        );
+        negotiatedMtu = await _ble.central.requestMtu(
+          result.deviceId,
+          mtu: 247,
+        );
+        try {
+          await _ble.central.setPreferredPhy(
+            result.deviceId,
+            txPhy: OmniBlePhy.le2m,
+            rxPhy: OmniBlePhy.le2m,
+          );
+        } on OmniBleException {
+          // PHY tuning is best-effort for the demo flow.
+        }
+      }
       final rssi = await _ble.central.readRssi(result.deviceId);
 
       if (!mounted) {
@@ -264,7 +284,8 @@ class _OmniBleHomePageState extends State<OmniBleHomePage> {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
-            'Connected RSSI for ${result.name ?? result.deviceId}: $rssi dBm',
+            'Connected RSSI for ${result.name ?? result.deviceId}: $rssi dBm'
+            '${negotiatedMtu == null ? '' : ' (MTU $negotiatedMtu)'}',
           ),
         ),
       );

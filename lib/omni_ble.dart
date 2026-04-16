@@ -53,8 +53,11 @@ class OmniBleCentral {
 
   Future<void> stopScan() => _platform.stopScan();
 
-  Future<void> connect(String deviceId, {Duration? timeout}) {
-    return _platform.connect(deviceId, timeout: timeout);
+  Future<void> connect(
+    String deviceId, {
+    OmniBleConnectionConfig config = const OmniBleConnectionConfig(),
+  }) {
+    return _platform.connect(deviceId, config: config);
   }
 
   Future<void> disconnect(String deviceId) => _platform.disconnect(deviceId);
@@ -65,6 +68,31 @@ class OmniBleCentral {
 
   Future<int> readRssi(String deviceId) {
     return _platform.readRssi(deviceId);
+  }
+
+  Future<int> requestMtu(String deviceId, {int mtu = 512}) {
+    return _platform.requestMtu(deviceId, mtu: mtu);
+  }
+
+  Future<void> requestConnectionPriority(
+    String deviceId,
+    OmniBleConnectionPriority priority,
+  ) {
+    return _platform.requestConnectionPriority(deviceId, priority);
+  }
+
+  Future<void> setPreferredPhy(
+    String deviceId, {
+    OmniBlePhy txPhy = OmniBlePhy.le1m,
+    OmniBlePhy rxPhy = OmniBlePhy.le1m,
+    OmniBlePhyCoding coding = OmniBlePhyCoding.unspecified,
+  }) {
+    return _platform.setPreferredPhy(
+      deviceId,
+      txPhy: txPhy,
+      rxPhy: rxPhy,
+      coding: coding,
+    );
   }
 
   Future<Uint8List> readCharacteristic(OmniBleCharacteristicAddress address) {

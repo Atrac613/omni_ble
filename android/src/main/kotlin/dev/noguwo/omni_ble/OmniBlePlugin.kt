@@ -115,11 +115,13 @@ class OmniBlePlugin :
   private companion object {
     const val OP_DISCOVER_SERVICES = "discoverServices"
     const val OP_READ_RSSI = "readRssi"
+    const val OP_REQUEST_MTU = "requestMtu"
     const val OP_READ_CHARACTERISTIC = "readCharacteristic"
     const val OP_READ_DESCRIPTOR = "readDescriptor"
     const val OP_WRITE_CHARACTERISTIC = "writeCharacteristic"
     const val OP_WRITE_DESCRIPTOR = "writeDescriptor"
     const val OP_SET_NOTIFICATION = "setNotification"
+    const val OP_SET_PREFERRED_PHY = "setPreferredPhy"
     const val REQUEST_CODE_PERMISSIONS = 0x0B1E
     val CLIENT_CHARACTERISTIC_CONFIGURATION_UUID: UUID =
       UUID.fromString("00002902-0000-1000-8000-00805f9b34fb")
@@ -251,6 +253,56 @@ class OmniBlePlugin :
         }
 
         replySuccess(operation.result, rssi)
+      }
+
+      override fun onMtuChanged(gatt: BluetoothGatt, mtu: Int, status: Int) {
+        val deviceId = normalizeDeviceId(gatt.device.address)
+        val connection = connections[deviceId] ?: return
+        val operation = connection.activeOperation
+
+        emitMtuChanged(deviceId, mtu, status)
+
+        if (operation?.type != OP_REQUEST_MTU || operation.key != deviceId) {
+          return
+        }
+
+        connection.activeOperation = null
+        if (status != BluetoothGatt.GATT_SUCCESS) {
+          replyError(
+            operation.result,
+            "request-mtu-failed",
+            "Bluetooth MTU request failed with status $status.",
+            mapOf("status" to status, "mtu" to mtu),
+          )
+          return
+        }
+
+        replySuccess(operation.result, mtu)
+      }
+
+      override fun onPhyUpdate(gatt: BluetoothGatt, txPhy: Int, rxPhy: Int, status: Int) {
+        val deviceId = normalizeDeviceId(gatt.device.address)
+        val connection = connections[deviceId] ?: return
+        val operation = connection.activeOperation
+
+        emitPhyUpdated(deviceId, txPhy, rxPhy, status)
+
+        if (operation?.type != OP_SET_PREFERRED_PHY || operation.key != deviceId) {
+          return
+        }
+
+        connection.activeOperation = null
+        if (status != BluetoothGatt.GATT_SUCCESS) {
+          replyError(
+            operation.result,
+            "set-preferred-phy-failed",
+            "Bluetooth preferred PHY update failed with status $status.",
+            mapOf("status" to status, "txPhy" to phyValue(txPhy), "rxPhy" to phyValue(rxPhy)),
+          )
+          return
+        }
+
+        replySuccess(operation.result, null)
       }
 
       @Suppress("DEPRECATION")
@@ -632,6 +684,9 @@ class OmniBlePlugin :
       "disconnect" -> disconnect(call, result)
       "discoverServices" -> discoverServices(call, result)
       "readRssi" -> readRssi(call, result)
+      "requestMtu" -> requestMtu(call, result)
+      "requestConnectionPriority" -> requestConnectionPriority(call, result)
+      "setPreferredPhy" -> setPreferredPhy(call, result)
       "readCharacteristic" -> readCharacteristic(call, result)
       "readDescriptor" -> readDescriptor(call, result)
       "writeCharacteristic" -> writeCharacteristic(call, result)
@@ -984,11 +1039,12 @@ class OmniBlePlugin :
       scheduleConnectTimeout(connection, timeoutMs)
     }
 
+    val autoConnect = call.argument<Boolean>("androidAutoConnect") ?: false
     try {
       val gatt =
         device.connectGatt(
           context,
-          false,
+          autoConnect,
           gattCallback,
           BluetoothDevice.TRANSPORT_LE,
         )
@@ -1188,6 +1244,254 @@ class OmniBlePlugin :
         connection.activeOperation = null
         result.error("read-failed", "Bluetooth RSSI read could not start.", null)
       }
+    } catch (error: SecurityException) {
+      connection.activeOperation = null
+      result.error(
+        "permission-denied",
+        error.message ?: "Bluetooth connect permission is missing on Android.",
+        missingPermissions,
+      )
+    }
+  }
+
+  @SuppressLint("MissingPermission")
+  private fun requestMtu(call: MethodCall, result: MethodChannel.Result) {
+    val context = applicationContext
+    if (context == null) {
+      result.error("unavailable", "Android context is not attached.", null)
+      return
+    }
+
+    val missingPermissions = missingConnectionPermissions(context)
+    if (missingPermissions.isNotEmpty()) {
+      result.error(
+        "permission-denied",
+        "Bluetooth connect permission is missing on Android.",
+        missingPermissions,
+      )
+      return
+    }
+
+    val deviceId = parseDeviceId(call.arguments)
+    if (deviceId == null) {
+      result.error("invalid-argument", "`deviceId` is required to request MTU.", null)
+      return
+    }
+
+    val connection = connectedConnection(deviceId)
+    if (connection == null) {
+      result.error(
+        "not-connected",
+        "Bluetooth device must be connected before requesting MTU.",
+        null,
+      )
+      return
+    }
+
+    if (connection.activeOperation != null) {
+      result.error("busy", "Another Bluetooth GATT operation is already in progress.", null)
+      return
+    }
+
+    val gatt = connection.gatt
+    if (gatt == null) {
+      result.error("not-connected", "Bluetooth GATT is not available.", null)
+      return
+    }
+
+    val mtu = (call.argument<Number>("mtu")?.toInt() ?: 512).coerceIn(23, 517)
+    connection.activeOperation =
+      PendingOperation(
+        type = OP_REQUEST_MTU,
+        key = deviceId,
+        result = result,
+      )
+
+    try {
+      if (!gatt.requestMtu(mtu)) {
+        connection.activeOperation = null
+        result.error("request-mtu-failed", "Bluetooth MTU request could not start.", null)
+      }
+    } catch (error: SecurityException) {
+      connection.activeOperation = null
+      result.error(
+        "permission-denied",
+        error.message ?: "Bluetooth connect permission is missing on Android.",
+        missingPermissions,
+      )
+    }
+  }
+
+  @SuppressLint("MissingPermission")
+  private fun requestConnectionPriority(call: MethodCall, result: MethodChannel.Result) {
+    val context = applicationContext
+    if (context == null) {
+      result.error("unavailable", "Android context is not attached.", null)
+      return
+    }
+
+    val missingPermissions = missingConnectionPermissions(context)
+    if (missingPermissions.isNotEmpty()) {
+      result.error(
+        "permission-denied",
+        "Bluetooth connect permission is missing on Android.",
+        missingPermissions,
+      )
+      return
+    }
+
+    val deviceId = parseDeviceId(call.arguments)
+    if (deviceId == null) {
+      result.error(
+        "invalid-argument",
+        "`deviceId` is required to request connection priority.",
+        null,
+      )
+      return
+    }
+
+    val connection = connectedConnection(deviceId)
+    if (connection == null) {
+      result.error(
+        "not-connected",
+        "Bluetooth device must be connected before requesting connection priority.",
+        null,
+      )
+      return
+    }
+
+    val gatt = connection.gatt
+    if (gatt == null) {
+      result.error("not-connected", "Bluetooth GATT is not available.", null)
+      return
+    }
+
+    val priority =
+      connectionPriorityFromValue(call.argument<String>("priority"))
+        ?: run {
+          result.error(
+            "invalid-argument",
+            "`priority` must be `balanced`, `high`, or `lowPower`.",
+            null,
+          )
+          return
+        }
+
+    try {
+      if (!gatt.requestConnectionPriority(priority)) {
+        result.error(
+          "request-connection-priority-failed",
+          "Bluetooth connection priority request could not start.",
+          null,
+        )
+        return
+      }
+    } catch (error: SecurityException) {
+      result.error(
+        "permission-denied",
+        error.message ?: "Bluetooth connect permission is missing on Android.",
+        missingPermissions,
+      )
+      return
+    }
+
+    result.success(null)
+  }
+
+  @SuppressLint("MissingPermission")
+  private fun setPreferredPhy(call: MethodCall, result: MethodChannel.Result) {
+    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) {
+      result.error(
+        "unsupported",
+        "Bluetooth preferred PHY updates require Android 8.0 or newer.",
+        null,
+      )
+      return
+    }
+
+    val context = applicationContext
+    if (context == null) {
+      result.error("unavailable", "Android context is not attached.", null)
+      return
+    }
+
+    val missingPermissions = missingConnectionPermissions(context)
+    if (missingPermissions.isNotEmpty()) {
+      result.error(
+        "permission-denied",
+        "Bluetooth connect permission is missing on Android.",
+        missingPermissions,
+      )
+      return
+    }
+
+    val deviceId = parseDeviceId(call.arguments)
+    if (deviceId == null) {
+      result.error("invalid-argument", "`deviceId` is required to set preferred PHY.", null)
+      return
+    }
+
+    val connection = connectedConnection(deviceId)
+    if (connection == null) {
+      result.error(
+        "not-connected",
+        "Bluetooth device must be connected before setting preferred PHY.",
+        null,
+      )
+      return
+    }
+
+    if (connection.activeOperation != null) {
+      result.error("busy", "Another Bluetooth GATT operation is already in progress.", null)
+      return
+    }
+
+    val gatt = connection.gatt
+    if (gatt == null) {
+      result.error("not-connected", "Bluetooth GATT is not available.", null)
+      return
+    }
+
+    val txPhy =
+      preferredPhyFromValue(call.argument<String>("txPhy"))
+        ?: run {
+          result.error(
+            "invalid-argument",
+            "`txPhy` must be `le1m`, `le2m`, or `leCoded`.",
+            null,
+          )
+          return
+        }
+    val rxPhy =
+      preferredPhyFromValue(call.argument<String>("rxPhy"))
+        ?: run {
+          result.error(
+            "invalid-argument",
+            "`rxPhy` must be `le1m`, `le2m`, or `leCoded`.",
+            null,
+          )
+          return
+        }
+    val coding =
+      phyOptionsFromValue(call.argument<String>("coding"))
+        ?: run {
+          result.error(
+            "invalid-argument",
+            "`coding` must be `unspecified`, `s2`, or `s8`.",
+            null,
+          )
+          return
+        }
+
+    connection.activeOperation =
+      PendingOperation(
+        type = OP_SET_PREFERRED_PHY,
+        key = deviceId,
+        result = result,
+      )
+
+    try {
+      gatt.setPreferredPhy(txPhy, rxPhy, coding)
     } catch (error: SecurityException) {
       connection.activeOperation = null
       result.error(
@@ -2500,6 +2804,29 @@ class OmniBlePlugin :
     )
   }
 
+  private fun emitMtuChanged(deviceId: String, mtu: Int, status: Int) {
+    emitEvent(
+      mapOf(
+        "type" to "mtuChanged",
+        "deviceId" to deviceId,
+        "mtu" to mtu,
+        "status" to status,
+      ),
+    )
+  }
+
+  private fun emitPhyUpdated(deviceId: String, txPhy: Int, rxPhy: Int, status: Int) {
+    emitEvent(
+      mapOf(
+        "type" to "phyUpdated",
+        "deviceId" to deviceId,
+        "txPhy" to phyValue(txPhy),
+        "rxPhy" to phyValue(rxPhy),
+        "status" to status,
+      ),
+    )
+  }
+
   @SuppressLint("MissingPermission")
   private fun currentAdapterState(): String {
     val adapter = bluetoothAdapter ?: return "unavailable"
@@ -2519,6 +2846,51 @@ class OmniBlePlugin :
       BluetoothAdapter.ERROR,
       -> "unknown"
       else -> "unknown"
+    }
+  }
+
+  private fun connectionPriorityFromValue(value: String?): Int? {
+    return when (value) {
+      "balanced",
+      null,
+      -> BluetoothGatt.CONNECTION_PRIORITY_BALANCED
+      "high" -> BluetoothGatt.CONNECTION_PRIORITY_HIGH
+      "lowPower" -> BluetoothGatt.CONNECTION_PRIORITY_LOW_POWER
+      else -> null
+    }
+  }
+
+  private fun preferredPhyFromValue(value: String?): Int? {
+    return when (value) {
+      "le1m",
+      null,
+      -> BluetoothDevice.PHY_LE_1M_MASK
+      "le2m" -> BluetoothDevice.PHY_LE_2M_MASK
+      "leCoded" -> BluetoothDevice.PHY_LE_CODED_MASK
+      else -> null
+    }
+  }
+
+  private fun phyOptionsFromValue(value: String?): Int? {
+    return when (value) {
+      "unspecified",
+      null,
+      -> BluetoothDevice.PHY_OPTION_NO_PREFERRED
+      "s2" -> BluetoothDevice.PHY_OPTION_S2
+      "s8" -> BluetoothDevice.PHY_OPTION_S8
+      else -> null
+    }
+  }
+
+  private fun phyValue(phy: Int): String {
+    return when (phy) {
+      BluetoothDevice.PHY_LE_2M,
+      BluetoothDevice.PHY_LE_2M_MASK,
+      -> "le2m"
+      BluetoothDevice.PHY_LE_CODED,
+      BluetoothDevice.PHY_LE_CODED_MASK,
+      -> "leCoded"
+      else -> "le1m"
     }
   }
 

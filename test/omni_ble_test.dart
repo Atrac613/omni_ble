@@ -13,6 +13,16 @@ class MockOmniBlePlatform
   OmniBleScanConfig? lastScanConfig;
   OmniBleGattDatabase? lastDatabase;
   Set<OmniBlePermission>? lastRequestedPermissions;
+  OmniBleConnectionConfig? lastConnectionConfig;
+  String? lastConnectedDeviceId;
+  String? lastRequestMtuDeviceId;
+  int? lastRequestedMtu;
+  String? lastPriorityDeviceId;
+  OmniBleConnectionPriority? lastConnectionPriority;
+  String? lastPreferredPhyDeviceId;
+  OmniBlePhy? lastTxPhy;
+  OmniBlePhy? lastRxPhy;
+  OmniBlePhyCoding? lastPhyCoding;
 
   @override
   Future<OmniBlePermissionStatus> checkPermissions(
@@ -57,7 +67,13 @@ class MockOmniBlePlatform
   Future<void> stopScan() async {}
 
   @override
-  Future<void> connect(String deviceId, {Duration? timeout}) async {}
+  Future<void> connect(
+    String deviceId, {
+    OmniBleConnectionConfig config = const OmniBleConnectionConfig(),
+  }) async {
+    lastConnectedDeviceId = deviceId;
+    lastConnectionConfig = config;
+  }
 
   @override
   Future<void> disconnect(String deviceId) async {}
@@ -70,6 +86,35 @@ class MockOmniBlePlatform
   @override
   Future<int> readRssi(String deviceId) async {
     return -64;
+  }
+
+  @override
+  Future<int> requestMtu(String deviceId, {int mtu = 512}) async {
+    lastRequestMtuDeviceId = deviceId;
+    lastRequestedMtu = mtu;
+    return 247;
+  }
+
+  @override
+  Future<void> requestConnectionPriority(
+    String deviceId,
+    OmniBleConnectionPriority priority,
+  ) async {
+    lastPriorityDeviceId = deviceId;
+    lastConnectionPriority = priority;
+  }
+
+  @override
+  Future<void> setPreferredPhy(
+    String deviceId, {
+    OmniBlePhy txPhy = OmniBlePhy.le1m,
+    OmniBlePhy rxPhy = OmniBlePhy.le1m,
+    OmniBlePhyCoding coding = OmniBlePhyCoding.unspecified,
+  }) async {
+    lastPreferredPhyDeviceId = deviceId;
+    lastTxPhy = txPhy;
+    lastRxPhy = rxPhy;
+    lastPhyCoding = coding;
   }
 
   @override
@@ -190,6 +235,27 @@ void main() {
     expect(fakePlatform.lastScanConfig?.allowDuplicates, isTrue);
   });
 
+  test('central.connect forwards connection config', () async {
+    const omniBlePlugin = OmniBle();
+    final fakePlatform = MockOmniBlePlatform();
+    OmniBlePlatform.instance = fakePlatform;
+
+    await omniBlePlugin.central.connect(
+      'device-1',
+      config: const OmniBleConnectionConfig(
+        timeout: Duration(seconds: 8),
+        androidAutoConnect: true,
+      ),
+    );
+
+    expect(fakePlatform.lastConnectedDeviceId, 'device-1');
+    expect(
+      fakePlatform.lastConnectionConfig?.timeout,
+      const Duration(seconds: 8),
+    );
+    expect(fakePlatform.lastConnectionConfig?.androidAutoConnect, isTrue);
+  });
+
   test('central.readDescriptor forwards descriptor address', () async {
     const omniBlePlugin = OmniBle();
     final fakePlatform = MockOmniBlePlatform();
@@ -215,6 +281,53 @@ void main() {
     final rssi = await omniBlePlugin.central.readRssi('device-1');
 
     expect(rssi, -64);
+  });
+
+  test(
+    'central.requestMtu forwards payload and returns negotiated value',
+    () async {
+      const omniBlePlugin = OmniBle();
+      final fakePlatform = MockOmniBlePlatform();
+      OmniBlePlatform.instance = fakePlatform;
+
+      final mtu = await omniBlePlugin.central.requestMtu('device-1', mtu: 247);
+
+      expect(mtu, 247);
+      expect(fakePlatform.lastRequestMtuDeviceId, 'device-1');
+      expect(fakePlatform.lastRequestedMtu, 247);
+    },
+  );
+
+  test('central.requestConnectionPriority forwards priority', () async {
+    const omniBlePlugin = OmniBle();
+    final fakePlatform = MockOmniBlePlatform();
+    OmniBlePlatform.instance = fakePlatform;
+
+    await omniBlePlugin.central.requestConnectionPriority(
+      'device-1',
+      OmniBleConnectionPriority.high,
+    );
+
+    expect(fakePlatform.lastPriorityDeviceId, 'device-1');
+    expect(fakePlatform.lastConnectionPriority, OmniBleConnectionPriority.high);
+  });
+
+  test('central.setPreferredPhy forwards PHY settings', () async {
+    const omniBlePlugin = OmniBle();
+    final fakePlatform = MockOmniBlePlatform();
+    OmniBlePlatform.instance = fakePlatform;
+
+    await omniBlePlugin.central.setPreferredPhy(
+      'device-1',
+      txPhy: OmniBlePhy.le2m,
+      rxPhy: OmniBlePhy.leCoded,
+      coding: OmniBlePhyCoding.s2,
+    );
+
+    expect(fakePlatform.lastPreferredPhyDeviceId, 'device-1');
+    expect(fakePlatform.lastTxPhy, OmniBlePhy.le2m);
+    expect(fakePlatform.lastRxPhy, OmniBlePhy.leCoded);
+    expect(fakePlatform.lastPhyCoding, OmniBlePhyCoding.s2);
   });
 
   test('OmniBleEvent parses connection state changes', () {
@@ -244,6 +357,36 @@ void main() {
       'device-1',
     );
     expect(event.value, Uint8List.fromList([1, 2, 3]));
+  });
+
+  test('OmniBleEvent parses mtu changes', () {
+    final event = OmniBleEvent.fromMap({
+      'type': 'mtuChanged',
+      'deviceId': 'device-1',
+      'mtu': 247,
+      'status': 0,
+    });
+
+    expect(event, isA<OmniBleMtuChangedEvent>());
+    expect((event as OmniBleMtuChangedEvent).deviceId, 'device-1');
+    expect(event.mtu, 247);
+    expect(event.status, 0);
+  });
+
+  test('OmniBleEvent parses phy updates', () {
+    final event = OmniBleEvent.fromMap({
+      'type': 'phyUpdated',
+      'deviceId': 'device-1',
+      'txPhy': 'le2m',
+      'rxPhy': 'leCoded',
+      'status': 0,
+    });
+
+    expect(event, isA<OmniBlePhyUpdatedEvent>());
+    expect((event as OmniBlePhyUpdatedEvent).deviceId, 'device-1');
+    expect(event.txPhy, OmniBlePhy.le2m);
+    expect(event.rxPhy, OmniBlePhy.leCoded);
+    expect(event.status, 0);
   });
 
   test('OmniBleEvent parses notification queue readiness', () {

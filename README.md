@@ -9,7 +9,7 @@ The current state is an early but usable cross-platform BLE foundation:
 - Dart-side public API is defined for both central and peripheral workflows.
 - Platform channels are wired on every target.
 - iOS and macOS now implement adapter-state events, central scanning, connection state events, RSSI reads, service discovery, characteristic/descriptor read-write, notification subscriptions, and a first peripheral backend.
-- Android now implements the same central-side surface plus a first peripheral backend, and the Dart API can now check/request the runtime Bluetooth permissions those flows need.
+- Android now implements the same central-side surface plus a first peripheral backend, including MTU / connection priority / PHY tuning helpers, and the Dart API can now check/request the runtime Bluetooth permissions those flows need.
 - Linux now exposes adapter-state events and native LE scanning via BlueZ, and Windows now exposes adapter-state events plus native LE scanning via the WinRT advertisement watcher. The desktop permission API continues to return `notRequired`.
 
 ## API shape
@@ -82,11 +82,13 @@ Future<void> peripheralFlow() async {
 
 - `iOS`: `getCapabilities()`, adapter state events, `startScan()`, `stopScan()`, scan result events, `connect()`, `disconnect()`, connection state events, `readRssi()`, `discoverServices()`, `readCharacteristic()`, `readDescriptor()`, `writeCharacteristic()`, `writeDescriptor()`, `setNotification()`, characteristic value change events, `publishGattDatabase()`, `clearGattDatabase()`, `startAdvertising()`, `stopAdvertising()`, `notifyCharacteristicValue()`, `readRequest`/`writeRequest`/`subscriptionChanged`/`notificationQueueReady` events, `respondToReadRequest()`, `respondToWriteRequest()`, `checkPermissions()`, `requestPermissions()` (`notRequired`)
 - `macOS`: `getCapabilities()`, adapter state events, `startScan()`, `stopScan()`, scan result events, `connect()`, `disconnect()`, connection state events, `readRssi()`, `discoverServices()`, `readCharacteristic()`, `readDescriptor()`, `writeCharacteristic()`, `writeDescriptor()`, `setNotification()`, characteristic value change events, `publishGattDatabase()`, `clearGattDatabase()`, `startAdvertising()`, `stopAdvertising()`, `notifyCharacteristicValue()`, `readRequest`/`writeRequest`/`subscriptionChanged`/`notificationQueueReady` events, `respondToReadRequest()`, `respondToWriteRequest()`, `checkPermissions()`, `requestPermissions()` (`notRequired`)
-- `Android`: `getCapabilities()`, adapter state events, `startScan()`, `stopScan()`, scan result events, `scanError` events, `connect()`, `disconnect()`, connection state events, `readRssi()`, `discoverServices()`, `readCharacteristic()`, `readDescriptor()`, `writeCharacteristic()`, `writeDescriptor()`, `setNotification()`, characteristic value change events, `publishGattDatabase()`, `clearGattDatabase()`, `startAdvertising()` (mode / tx power / timeout options), `stopAdvertising()`, `notifyCharacteristicValue()`, `readRequest`/`writeRequest`/`subscriptionChanged`/`notificationQueueReady` events, `respondToReadRequest()`, `respondToWriteRequest()`, `checkPermissions()`, `requestPermissions()`
+- `Android`: `getCapabilities()`, adapter state events, `startScan()`, `stopScan()`, scan result events, `scanError` events, `connect()` (timeout / autoConnect config), `disconnect()`, connection state events, `readRssi()`, `requestMtu()`, `requestConnectionPriority()`, `setPreferredPhy()`, `mtuChanged`/`phyUpdated` events, `discoverServices()`, `readCharacteristic()`, `readDescriptor()`, `writeCharacteristic()`, `writeDescriptor()`, `setNotification()`, characteristic value change events, `publishGattDatabase()`, `clearGattDatabase()`, `startAdvertising()` (mode / tx power / timeout options), `stopAdvertising()`, `notifyCharacteristicValue()`, `readRequest`/`writeRequest`/`subscriptionChanged`/`notificationQueueReady` events, `respondToReadRequest()`, `respondToWriteRequest()`, `checkPermissions()`, `requestPermissions()`
 - `Windows`: `getCapabilities()`, adapter state events, `startScan()`, `stopScan()`, scan result events, `scanError` events, `checkPermissions()`, `requestPermissions()` (`notRequired`)
 - `Linux`: `getCapabilities()`, adapter state events, `startScan()`, `stopScan()`, scan result events, `checkPermissions()`, `requestPermissions()` (`notRequired`)
 
 Peripheral request events now include the request offset on Apple and Android, Android write requests also include `preparedWrite` / `responseNeeded` metadata when the platform provides it, and Apple / Android now surface `notificationQueueReady` to help pace server-side notifications.
+
+Android central connections now accept `OmniBleConnectionConfig(timeout: ..., androidAutoConnect: ...)` and expose `requestMtu()`, `requestConnectionPriority()`, and `setPreferredPhy()` to tune a live connection. Apple targets return `unsupported` for the Android-only tuning APIs that CoreBluetooth does not expose.
 
 ## Android permissions
 
@@ -100,7 +102,6 @@ Peripheral request events now include the request offset on Apple and Android, A
 
 ## Recommended next steps
 
-1. Harden the peripheral implementation with richer advertising options and subscription/backpressure ergonomics.
-2. Harden the central implementation with MTU/PHY options, richer connection tuning, and more integration coverage.
-3. Bring Windows and Linux onto either native stacks or a well-scoped abstraction layer.
-4. Add higher-level convenience helpers for permission rationale / settings recovery on Android.
+1. Expand device-lab integration coverage across Android, Apple, Windows, and Linux hardware.
+2. Bring Windows and Linux from scan-first support to fuller GATT client / peripheral parity.
+3. Add higher-level convenience helpers for permission rationale / settings recovery on Android.

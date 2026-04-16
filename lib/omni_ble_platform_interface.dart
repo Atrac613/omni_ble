@@ -42,13 +42,27 @@ abstract class OmniBlePlatform extends PlatformInterface {
 
   Future<void> stopScan();
 
-  Future<void> connect(String deviceId, {Duration? timeout});
+  Future<void> connect(String deviceId, {OmniBleConnectionConfig config});
 
   Future<void> disconnect(String deviceId);
 
   Future<List<OmniBleGattService>> discoverServices(String deviceId);
 
   Future<int> readRssi(String deviceId);
+
+  Future<int> requestMtu(String deviceId, {int mtu});
+
+  Future<void> requestConnectionPriority(
+    String deviceId,
+    OmniBleConnectionPriority priority,
+  );
+
+  Future<void> setPreferredPhy(
+    String deviceId, {
+    OmniBlePhy txPhy,
+    OmniBlePhy rxPhy,
+    OmniBlePhyCoding coding,
+  });
 
   Future<Uint8List> readCharacteristic(OmniBleCharacteristicAddress address);
 

@@ -67,11 +67,11 @@ class MethodChannelOmniBle extends OmniBlePlatform {
   }
 
   @override
-  Future<void> connect(String deviceId, {Duration? timeout}) {
-    return _invokeVoid('connect', {
-      'deviceId': deviceId,
-      if (timeout != null) 'timeoutMs': timeout.inMilliseconds,
-    });
+  Future<void> connect(
+    String deviceId, {
+    OmniBleConnectionConfig config = const OmniBleConnectionConfig(),
+  }) {
+    return _invokeVoid('connect', {'deviceId': deviceId, ...config.toMap()});
   }
 
   @override
@@ -93,16 +93,55 @@ class MethodChannelOmniBle extends OmniBlePlatform {
 
   @override
   Future<int> readRssi(String deviceId) async {
+    return _invokeInt('readRssi', {'deviceId': deviceId});
+  }
+
+  @override
+  Future<int> requestMtu(String deviceId, {int mtu = 512}) async {
+    return _invokeInt('requestMtu', {'deviceId': deviceId, 'mtu': mtu});
+  }
+
+  @override
+  Future<void> requestConnectionPriority(
+    String deviceId,
+    OmniBleConnectionPriority priority,
+  ) {
+    return _invokeVoid('requestConnectionPriority', {
+      'deviceId': deviceId,
+      'priority': priority.value,
+    });
+  }
+
+  @override
+  Future<void> setPreferredPhy(
+    String deviceId, {
+    OmniBlePhy txPhy = OmniBlePhy.le1m,
+    OmniBlePhy rxPhy = OmniBlePhy.le1m,
+    OmniBlePhyCoding coding = OmniBlePhyCoding.unspecified,
+  }) {
+    return _invokeVoid('setPreferredPhy', {
+      'deviceId': deviceId,
+      'txPhy': txPhy.value,
+      'rxPhy': rxPhy.value,
+      'coding': coding.value,
+    });
+  }
+
+  Future<int> _invokeInt(
+    String method, [
+    Map<String, Object?>? arguments,
+  ]) async {
     try {
-      final response = await methodChannel.invokeMethod<Object?>('readRssi', {
-        'deviceId': deviceId,
-      });
+      final response = await methodChannel.invokeMethod<Object?>(
+        method,
+        arguments,
+      );
       if (response is num) {
         return response.toInt();
       }
       throw OmniBleException(
         code: 'invalid-response',
-        message: 'Expected a number from `readRssi`, but received $response.',
+        message: 'Expected a number from `$method`, but received $response.',
       );
     } on PlatformException catch (error) {
       throw OmniBleException(
@@ -113,7 +152,7 @@ class MethodChannelOmniBle extends OmniBlePlatform {
     } on MissingPluginException {
       throw OmniBleException(
         code: 'unimplemented',
-        message: 'The native method `readRssi` has not been implemented yet.',
+        message: 'The native method `$method` has not been implemented yet.',
       );
     }
   }

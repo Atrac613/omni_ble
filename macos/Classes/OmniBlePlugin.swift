@@ -88,6 +88,12 @@ public class OmniBlePlugin: NSObject, FlutterPlugin, FlutterStreamHandler, CBCen
       discoverServices(arguments: call.arguments, result: result)
     case "readRssi":
       readRssi(arguments: call.arguments, result: result)
+    case "requestMtu":
+      requestMtu(result: result)
+    case "requestConnectionPriority":
+      requestConnectionPriority(result: result)
+    case "setPreferredPhy":
+      setPreferredPhy(result: result)
     case "readCharacteristic":
       readCharacteristic(arguments: call.arguments, result: result)
     case "readDescriptor":
@@ -980,6 +986,36 @@ public class OmniBlePlugin: NSObject, FlutterPlugin, FlutterStreamHandler, CBCen
 
     pendingReadResults[operationKey] = result
     peripheral.readRSSI()
+  }
+
+  private func requestMtu(result: @escaping FlutterResult) {
+    result(
+      FlutterError(
+        code: "unsupported",
+        message: "CoreBluetooth does not expose negotiated ATT MTU requests on macOS.",
+        details: nil
+      )
+    )
+  }
+
+  private func requestConnectionPriority(result: @escaping FlutterResult) {
+    result(
+      FlutterError(
+        code: "unsupported",
+        message: "Connection priority tuning is currently only available on Android.",
+        details: nil
+      )
+    )
+  }
+
+  private func setPreferredPhy(result: @escaping FlutterResult) {
+    result(
+      FlutterError(
+        code: "unsupported",
+        message: "Preferred PHY tuning is currently only available on Android.",
+        details: nil
+      )
+    )
   }
 
   private func readCharacteristic(arguments: Any?, result: @escaping FlutterResult) {
