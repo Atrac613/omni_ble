@@ -13,15 +13,17 @@ import 'package:omni_ble_example/main.dart';
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   const channel = MethodChannel('omni_ble/methods');
+  final availableFeatures = <String>[];
 
   setUp(() {
+    availableFeatures.clear();
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(channel, (methodCall) async {
           if (methodCall.method == 'getCapabilities') {
             return {
               'platform': 'test',
               'platformVersion': '1.0',
-              'availableFeatures': <String>[],
+              'availableFeatures': List<String>.from(availableFeatures),
             };
           }
           if (methodCall.method == 'checkPermissions') {

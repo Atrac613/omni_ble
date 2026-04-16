@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:omni_ble/omni_ble.dart';
@@ -24,6 +25,10 @@ class OmniBleHomePage extends StatefulWidget {
 }
 
 class _OmniBleHomePageState extends State<OmniBleHomePage> {
+  static const _demoServiceUuid = '12345678-1234-5678-1234-56789abcdef0';
+  static const _demoCharacteristicUuid =
+      '12345678-1234-5678-1234-56789abcdef1';
+  static const _demoDescriptorUuid = '00002901-0000-1000-8000-00805f9b34fb';
   static const _runtimePermissions = {
     OmniBlePermission.scan,
     OmniBlePermission.connect,
@@ -39,7 +44,12 @@ class _OmniBleHomePageState extends State<OmniBleHomePage> {
   Map<String, int> _connectedRssi = const {};
   Map<String, String> _serviceSummaries = const {};
   bool _isScanning = false;
+  bool _isPeripheralBusy = false;
+  bool _peripheralPublished = false;
+  bool _peripheralAdvertising = false;
+  int _demoNotificationValue = 1;
   String? _lastScanError;
+  String? _lastPeripheralEvent;
   String? _centralActionDeviceId;
   List<OmniBleScanResult> _scanResults = const [];
 
@@ -91,6 +101,39 @@ class _OmniBleHomePageState extends State<OmniBleHomePage> {
         _lastScanError =
             event.message ?? 'Bluetooth scanning failed with code $codeLabel.';
         errorMessage = _lastScanError;
+        return;
+      }
+
+      if (event is OmniBleReadRequestEvent) {
+        _lastPeripheralEvent =
+            'Read request at offset ${event.offset} for ${event.characteristicUuid}.';
+        unawaited(_respondToReadRequest(event));
+        return;
+      }
+
+      if (event is OmniBleWriteRequestEvent) {
+        final payloadLabel = event.value.isEmpty
+            ? 'empty payload'
+            : event.value.join(',');
+        if (event.value.isNotEmpty) {
+          _demoNotificationValue = event.value.last;
+        }
+        _lastPeripheralEvent =
+            'Write request at offset ${event.offset} with $payloadLabel.';
+        unawaited(_respondToWriteRequest(event));
+        return;
+      }
+
+      if (event is OmniBleSubscriptionChanged) {
+        _lastPeripheralEvent =
+            '${event.subscribed ? 'Subscribed' : 'Unsubscribed'} on ${event.characteristicUuid}.';
+        return;
+      }
+
+      if (event is OmniBleNotificationQueueReadyEvent) {
+        _lastPeripheralEvent = event.status == null
+            ? 'Notification queue is ready.'
+            : 'Notification queue is ready (status ${event.status}).';
       }
     });
 
@@ -236,6 +279,12 @@ class _OmniBleHomePageState extends State<OmniBleHomePage> {
       'android' || 'ios' || 'macos' => true,
       _ => false,
     };
+  }
+
+  bool _supportsPeripheralSmoke(OmniBleCapabilities capabilities) {
+    return capabilities.supports(OmniBleFeature.peripheral) &&
+        capabilities.supports(OmniBleFeature.advertising) &&
+        capabilities.supports(OmniBleFeature.gattServer);
   }
 
   String _centralActionLabel(OmniBleCapabilities capabilities) {
@@ -412,6 +461,204 @@ class _OmniBleHomePageState extends State<OmniBleHomePage> {
     }
   }
 
+  Future<void> _publishDemoGattDatabase() async {
+    try {
+      setState(() {
+        _isPeripheralBusy = true;
+      });
+
+      await _ble.peripheral.publishGattDatabase(
+        OmniBleGattDatabase(
+          services: [
+            OmniBleGattService(
+              uuid: _demoServiceUuid,
+              characteristics: [
+                OmniBleGattCharacteristic(
+                  uuid: _demoCharacteristicUuid,
+                  properties: {
+                    OmniBleGattProperty.read,
+                    OmniBleGattProperty.write,
+                    OmniBleGattProperty.writeWithoutResponse,
+                    OmniBleGattProperty.notify,
+                  },
+                  permissions: {
+                    OmniBleGattPermission.read,
+                    OmniBleGattPermission.write,
+                  },
+                  descriptors: [
+                    OmniBleGattDescriptor(
+                      uuid: _demoDescriptorUuid,
+                      permissions: {
+                        OmniBleGattPermission.read,
+                      },
+                      initialValue: Uint8List.fromList([
+                        111,
+                        109,
+                        110,
+                        105,
+                        95,
+                        98,
+                        108,
+                        101,
+                      ]),
+                    ),
+                  ],
+                  initialValue: Uint8List.fromList([1]),
+                ),
+              ],
+            ),
+          ],
+        ),
+      );
+
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _peripheralPublished = true;
+        _lastPeripheralEvent = 'Demo GATT database published.';
+      });
+    } on OmniBleException catch (error) {
+      _showError(error);
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isPeripheralBusy = false;
+        });
+      }
+    }
+  }
+
+  Future<void> _clearDemoGattDatabase() async {
+    try {
+      setState(() {
+        _isPeripheralBusy = true;
+      });
+      if (_peripheralAdvertising) {
+        await _ble.peripheral.stopAdvertising();
+      }
+      await _ble.peripheral.clearGattDatabase();
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _peripheralPublished = false;
+        _peripheralAdvertising = false;
+        _lastPeripheralEvent = 'Demo GATT database cleared.';
+      });
+    } on OmniBleException catch (error) {
+      _showError(error);
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isPeripheralBusy = false;
+        });
+      }
+    }
+  }
+
+  Future<void> _togglePeripheralAdvertising() async {
+    try {
+      setState(() {
+        _isPeripheralBusy = true;
+      });
+
+      if (_peripheralAdvertising) {
+        await _ble.peripheral.stopAdvertising();
+        if (!mounted) {
+          return;
+        }
+        setState(() {
+          _peripheralAdvertising = false;
+          _lastPeripheralEvent = 'Demo advertising stopped.';
+        });
+        return;
+      }
+
+      if (!_peripheralPublished) {
+        await _publishDemoGattDatabase();
+        if (!mounted || !_peripheralPublished) {
+          return;
+        }
+      }
+
+      await _ble.peripheral.startAdvertising(
+        const OmniBleAdvertisement(
+          localName: 'omni_ble demo',
+          serviceUuids: [_demoServiceUuid],
+          connectable: true,
+          includeTxPowerLevel: true,
+        ),
+      );
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _peripheralAdvertising = true;
+        _lastPeripheralEvent = 'Demo advertising started.';
+      });
+    } on OmniBleException catch (error) {
+      _showError(error);
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isPeripheralBusy = false;
+        });
+      }
+    }
+  }
+
+  Future<void> _sendDemoNotification() async {
+    try {
+      setState(() {
+        _isPeripheralBusy = true;
+      });
+
+      final value = Uint8List.fromList([_demoNotificationValue & 0xFF]);
+      await _ble.peripheral.notifyCharacteristicValue(
+        const OmniBleCharacteristicAddress(
+          serviceUuid: _demoServiceUuid,
+          characteristicUuid: _demoCharacteristicUuid,
+        ),
+        value,
+      );
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _demoNotificationValue = (_demoNotificationValue + 1) & 0xFF;
+        _lastPeripheralEvent = 'Sent demo notification ${value.first}.';
+      });
+    } on OmniBleException catch (error) {
+      _showError(error);
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isPeripheralBusy = false;
+        });
+      }
+    }
+  }
+
+  Future<void> _respondToReadRequest(OmniBleReadRequestEvent event) async {
+    try {
+      await _ble.peripheral.respondToReadRequest(
+        event.requestId,
+        Uint8List.fromList([_demoNotificationValue & 0xFF]),
+      );
+    } on OmniBleException catch (error) {
+      _showError(error);
+    }
+  }
+
+  Future<void> _respondToWriteRequest(OmniBleWriteRequestEvent event) async {
+    try {
+      await _ble.peripheral.respondToWriteRequest(event.requestId);
+    } on OmniBleException catch (error) {
+      _showError(error);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -450,7 +697,7 @@ class _OmniBleHomePageState extends State<OmniBleHomePage> {
                           ? 'Central and peripheral BLE operations are implemented on Android too. Runtime Bluetooth permission still has to be granted, and this example can request it through the plugin API.'
                           : capabilities.platform == 'windows' ||
                                 capabilities.platform == 'linux'
-                          ? 'Desktop central GATT client support is now available for scan, connect, discovery, read/write, and notifications. Peripheral/server work is still more limited on desktop, and connected RSSI is not exposed there yet.'
+                          ? 'Desktop central and peripheral BLE flows are now available too. This example can publish a demo GATT server and advertise it, while connected RSSI still remains unavailable on desktop.'
                           : 'Central and peripheral BLE operations, including connected RSSI reads, are currently implemented on Apple platforms and Android.'
                     : capabilities.supports(OmniBleFeature.scanning)
                     ? 'Central scanning is implemented, but the rest of the GATT client surface is still being filled in for this target.'
@@ -641,6 +888,76 @@ class _OmniBleHomePageState extends State<OmniBleHomePage> {
                 ),
               ),
               const SizedBox(height: 24),
+              if (_supportsPeripheralSmoke(capabilities)) ...[
+                Text(
+                  'Desktop Peripheral Smoke',
+                  style: Theme.of(context).textTheme.titleMedium,
+                ),
+                const SizedBox(height: 8),
+                Card(
+                  child: Padding(
+                    padding: const EdgeInsets.all(16),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          _peripheralPublished
+                              ? _peripheralAdvertising
+                                    ? 'Demo GATT is published and advertising.'
+                                    : 'Demo GATT is published and ready to advertise.'
+                              : 'Publish the demo GATT database to start the desktop peripheral smoke flow.',
+                        ),
+                        const SizedBox(height: 12),
+                        Wrap(
+                          spacing: 12,
+                          runSpacing: 12,
+                          children: [
+                            FilledButton.tonal(
+                              onPressed: _isPeripheralBusy
+                                  ? null
+                                  : _publishDemoGattDatabase,
+                              child: Text(
+                                _isPeripheralBusy &&
+                                        !_peripheralPublished
+                                    ? 'Publishing demo GATT...'
+                                    : 'Publish demo GATT',
+                              ),
+                            ),
+                            OutlinedButton(
+                              onPressed: _isPeripheralBusy || !_peripheralPublished
+                                  ? null
+                                  : _clearDemoGattDatabase,
+                              child: const Text('Clear demo GATT'),
+                            ),
+                            FilledButton(
+                              onPressed: _isPeripheralBusy
+                                  ? null
+                                  : _togglePeripheralAdvertising,
+                              child: Text(
+                                _peripheralAdvertising
+                                    ? 'Stop demo advertising'
+                                    : 'Start demo advertising',
+                              ),
+                            ),
+                            OutlinedButton(
+                              onPressed: _isPeripheralBusy || !_peripheralPublished
+                                  ? null
+                                  : _sendDemoNotification,
+                              child: const Text('Send demo notification'),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 12),
+                        Text(
+                          _lastPeripheralEvent ??
+                              'Read/write requests will be auto-acknowledged when a central interacts with the demo characteristic.',
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 24),
+              ],
               Text(
                 'Device-lab checklist',
                 style: Theme.of(context).textTheme.titleMedium,
@@ -653,7 +970,8 @@ class _OmniBleHomePageState extends State<OmniBleHomePage> {
                     'Central smoke: startScan -> connect -> discoverServices\n'
                     'Mobile smoke: readRssi after connect, then disconnect\n'
                     'GATT smoke: read/write known characteristics and descriptors, then enable notifications\n'
-                    'Peripheral smoke: publishGattDatabase -> startAdvertising -> handle read/write requests -> notifyCharacteristicValue',
+                    'Peripheral smoke: publishGattDatabase -> startAdvertising -> handle read/write requests -> notifyCharacteristicValue\n'
+                    'Desktop smoke: use the demo GATT buttons above, then connect from another host and validate remote reads/writes/notifications',
                   ),
                 ),
               ),

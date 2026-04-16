@@ -10,7 +10,7 @@ The current state is an early but usable cross-platform BLE foundation:
 - Platform channels are wired on every target.
 - iOS and macOS now implement adapter-state events, central scanning, connection state events, RSSI reads, service discovery, characteristic/descriptor read-write, notification subscriptions, and a first peripheral backend.
 - Android now implements the same central-side surface plus a first peripheral backend, including MTU / connection priority / PHY tuning helpers, and the Dart API can now check/request the runtime Bluetooth permissions those flows need alongside rationale/settings helpers.
-- Linux now exposes a BlueZ-backed central GATT client for scan/connect/discover/read/write/notify, and Windows now exposes the same central-side surface through WinRT. The desktop permission API continues to return `notRequired`.
+- Linux and Windows now expose desktop central GATT client flows plus a first peripheral/server backend. The desktop permission API continues to return `notRequired`.
 
 ## API shape
 
@@ -83,14 +83,14 @@ Future<void> peripheralFlow() async {
 - `iOS`: `getCapabilities()`, adapter state events, `startScan()`, `stopScan()`, scan result events, `connect()`, `disconnect()`, connection state events, `readRssi()`, `discoverServices()`, `readCharacteristic()`, `readDescriptor()`, `writeCharacteristic()`, `writeDescriptor()`, `setNotification()`, characteristic value change events, `publishGattDatabase()`, `clearGattDatabase()`, `startAdvertising()`, `stopAdvertising()`, `notifyCharacteristicValue()`, `readRequest`/`writeRequest`/`subscriptionChanged`/`notificationQueueReady` events, `respondToReadRequest()`, `respondToWriteRequest()`, `checkPermissions()`, `requestPermissions()` (`notRequired`)
 - `macOS`: `getCapabilities()`, adapter state events, `startScan()`, `stopScan()`, scan result events, `connect()`, `disconnect()`, connection state events, `readRssi()`, `discoverServices()`, `readCharacteristic()`, `readDescriptor()`, `writeCharacteristic()`, `writeDescriptor()`, `setNotification()`, characteristic value change events, `publishGattDatabase()`, `clearGattDatabase()`, `startAdvertising()`, `stopAdvertising()`, `notifyCharacteristicValue()`, `readRequest`/`writeRequest`/`subscriptionChanged`/`notificationQueueReady` events, `respondToReadRequest()`, `respondToWriteRequest()`, `checkPermissions()`, `requestPermissions()` (`notRequired`)
 - `Android`: `getCapabilities()`, adapter state events, `startScan()`, `stopScan()`, scan result events, `scanError` events, `connect()` (timeout / autoConnect config), `disconnect()`, connection state events, `readRssi()`, `requestMtu()`, `requestConnectionPriority()`, `setPreferredPhy()`, `mtuChanged`/`phyUpdated` events, `discoverServices()`, `readCharacteristic()`, `readDescriptor()`, `writeCharacteristic()`, `writeDescriptor()`, `setNotification()`, characteristic value change events, `publishGattDatabase()`, `clearGattDatabase()`, `startAdvertising()` (mode / tx power / timeout options), `stopAdvertising()`, `notifyCharacteristicValue()`, `readRequest`/`writeRequest`/`subscriptionChanged`/`notificationQueueReady` events, `respondToReadRequest()`, `respondToWriteRequest()`, `checkPermissions()`, `requestPermissions()`
-- `Windows`: `getCapabilities()`, adapter state events, `startScan()`, `stopScan()`, scan result events, `scanError` events, `connect()`, `disconnect()`, connection state events, `discoverServices()`, `readCharacteristic()`, `readDescriptor()`, `writeCharacteristic()`, `writeDescriptor()`, `setNotification()`, characteristic value change events, `checkPermissions()`, `requestPermissions()` (`notRequired`)
-- `Linux`: `getCapabilities()`, adapter state events, `startScan()`, `stopScan()`, scan result events, `connect()`, `disconnect()`, connection state events, `discoverServices()`, `readCharacteristic()`, `readDescriptor()`, `writeCharacteristic()`, `writeDescriptor()`, `setNotification()`, characteristic value change events, `checkPermissions()`, `requestPermissions()` (`notRequired`)
+- `Windows`: `getCapabilities()`, adapter state events, `startScan()`, `stopScan()`, scan result events, `scanError` events, `connect()`, `disconnect()`, connection state events, `discoverServices()`, `readCharacteristic()`, `readDescriptor()`, `writeCharacteristic()`, `writeDescriptor()`, `setNotification()`, characteristic value change events, `publishGattDatabase()`, `clearGattDatabase()`, `startAdvertising()`, `stopAdvertising()`, `notifyCharacteristicValue()`, `readRequest`/`writeRequest`/`subscriptionChanged`/`notificationQueueReady` events, `respondToReadRequest()`, `respondToWriteRequest()`, `checkPermissions()`, `requestPermissions()` (`notRequired`)
+- `Linux`: `getCapabilities()`, adapter state events, `startScan()`, `stopScan()`, scan result events, `connect()`, `disconnect()`, connection state events, `discoverServices()`, `readCharacteristic()`, `readDescriptor()`, `writeCharacteristic()`, `writeDescriptor()`, `setNotification()`, characteristic value change events, `publishGattDatabase()`, `clearGattDatabase()`, `startAdvertising()`, `stopAdvertising()`, `notifyCharacteristicValue()`, `readRequest`/`writeRequest`/`subscriptionChanged`/`notificationQueueReady` events, `respondToReadRequest()`, `respondToWriteRequest()`, `checkPermissions()`, `requestPermissions()` (`notRequired`)
 
 Peripheral request events now include the request offset on Apple and Android, Android write requests also include `preparedWrite` / `responseNeeded` metadata when the platform provides it, and Apple / Android now surface `notificationQueueReady` to help pace server-side notifications.
 
 Android central connections now accept `OmniBleConnectionConfig(timeout: ..., androidAutoConnect: ...)` and expose `requestMtu()`, `requestConnectionPriority()`, and `setPreferredPhy()` to tune a live connection. Apple targets return `unsupported` for the Android-only tuning APIs that CoreBluetooth does not expose.
 
-Windows and Linux now advertise `gattClient` / `notifications` in `availableFeatures`, which lets the example app run a `connect -> discoverServices` smoke flow on desktop hardware. `readRssi()` remains unavailable on those desktop targets for now.
+Windows and Linux now advertise `peripheral` / `advertising` / `gattServer` alongside `gattClient` / `notifications`, which lets the example app run both the desktop central smoke flow and a first desktop peripheral smoke flow. `readRssi()` remains unavailable on those desktop targets for now, and BlueZ notifications are broadcast to current subscribers rather than targeted per device.
 
 ## Android permissions
 
@@ -123,9 +123,9 @@ Pass criteria:
 - `discoverServices()` returns a non-empty service tree for a known GATT device.
 - `readCharacteristic()` / `writeCharacteristic()` and descriptor reads/writes succeed on a known test service.
 - `setNotification()` causes at least one `characteristicValueChanged` event on the subscribed characteristic.
-- Peripheral scenarios also verify advertising start/stop, request events, responses, and server-side notifications once desktop server backends land.
+- Peripheral scenarios verify advertising start/stop, request events, responses, and server-side notifications on every backend, with the Linux caveat that subscription events are device-agnostic at the BlueZ layer.
 
 ## Recommended next steps
 
 1. Run the device-lab matrix across Android, Apple, Windows, and Linux hardware and capture any interoperability gaps.
-2. Finish desktop peripheral/server parity for Windows and Linux.
+2. Document any platform-specific caveats that show up on real hardware, especially around BlueZ advertising and Windows local-name behavior.
