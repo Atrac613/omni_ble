@@ -28,7 +28,7 @@ TEST(OmniBlePlugin, GetCapabilities) {
   FlValue* features = fl_value_lookup_string(result, "availableFeatures");
   ASSERT_NE(features, nullptr);
   ASSERT_EQ(fl_value_get_type(features), FL_VALUE_TYPE_LIST);
-  ASSERT_EQ(fl_value_get_length(features), 4U);
+  ASSERT_EQ(fl_value_get_length(features), 7U);
   EXPECT_STREQ(fl_value_get_string(fl_value_get_list_value(features, 0)),
                "central");
   EXPECT_STREQ(fl_value_get_string(fl_value_get_list_value(features, 1)),
@@ -36,6 +36,12 @@ TEST(OmniBlePlugin, GetCapabilities) {
   EXPECT_STREQ(fl_value_get_string(fl_value_get_list_value(features, 2)),
                "gattClient");
   EXPECT_STREQ(fl_value_get_string(fl_value_get_list_value(features, 3)),
+               "peripheral");
+  EXPECT_STREQ(fl_value_get_string(fl_value_get_list_value(features, 4)),
+               "advertising");
+  EXPECT_STREQ(fl_value_get_string(fl_value_get_list_value(features, 5)),
+               "gattServer");
+  EXPECT_STREQ(fl_value_get_string(fl_value_get_list_value(features, 6)),
                "notifications");
 }
 
