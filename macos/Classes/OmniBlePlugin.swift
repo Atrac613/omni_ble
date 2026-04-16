@@ -6,7 +6,7 @@ public class OmniBlePlugin: NSObject, FlutterPlugin, FlutterStreamHandler, CBCen
   CBPeripheralDelegate, CBPeripheralManagerDelegate
 {
   private struct ServiceDiscoveryContext {
-    var remainingServiceCount: Int
+    var remainingOperationCount: Int
   }
 
   private struct PendingNotificationRequest {
@@ -245,7 +245,7 @@ public class OmniBlePlugin: NSObject, FlutterPlugin, FlutterStreamHandler, CBCen
       return
     }
 
-    discoveryContexts[identifier] = ServiceDiscoveryContext(remainingServiceCount: services.count)
+    discoveryContexts[identifier] = ServiceDiscoveryContext(remainingOperationCount: services.count)
     for service in services {
       peripheral.discoverCharacteristics(nil, for: service)
     }
@@ -271,18 +271,57 @@ public class OmniBlePlugin: NSObject, FlutterPlugin, FlutterStreamHandler, CBCen
     }
 
     cacheCharacteristics(for: peripheral, service: service)
-
+    let characteristics = service.characteristics ?? []
     guard var context = discoveryContexts[identifier] else {
       return
     }
 
-    context.remainingServiceCount -= 1
-    if context.remainingServiceCount > 0 {
+    if characteristics.isEmpty {
+      advanceServiceDiscovery(identifier: identifier, services: peripheral.services ?? [])
+      return
+    }
+
+    context.remainingOperationCount += characteristics.count - 1
+    discoveryContexts[identifier] = context
+    for characteristic in characteristics {
+      peripheral.discoverDescriptors(for: characteristic)
+    }
+  }
+
+  public func peripheral(
+    _ peripheral: CBPeripheral,
+    didDiscoverDescriptorsFor characteristic: CBCharacteristic,
+    error: Error?
+  ) {
+    let identifier = peripheral.identifier
+
+    if let error {
+      finishServiceDiscovery(
+        identifier: identifier,
+        error: FlutterError(
+          code: "discovery-failed",
+          message: error.localizedDescription,
+          details: nil
+        )
+      )
+      return
+    }
+
+    advanceServiceDiscovery(identifier: identifier, services: peripheral.services ?? [])
+  }
+
+  private func advanceServiceDiscovery(identifier: UUID, services: [CBService]) {
+    guard var context = discoveryContexts[identifier] else {
+      return
+    }
+
+    context.remainingOperationCount -= 1
+    if context.remainingOperationCount > 0 {
       discoveryContexts[identifier] = context
       return
     }
 
-    finishServiceDiscovery(identifier: identifier, services: peripheral.services ?? [])
+    finishServiceDiscovery(identifier: identifier, services: services)
   }
 
   public func peripheral(
@@ -1775,9 +1814,24 @@ public class OmniBlePlugin: NSObject, FlutterPlugin, FlutterStreamHandler, CBCen
       "uuid": canonicalUuidString(characteristic.uuid),
       "properties": characteristicProperties(characteristic.properties),
       "permissions": [String](),
-      "descriptors": [[String: Any]](),
+      "descriptors": (characteristic.descriptors ?? []).map(descriptorPayload),
       "initialValue": characteristic.value.map(Array.init) as Any,
     ]
+  }
+
+  private func descriptorPayload(_ descriptor: CBDescriptor) -> [String: Any] {
+    return [
+      "uuid": canonicalUuidString(descriptor.uuid),
+      "permissions": [String](),
+      "initialValue": descriptorValuePayload(descriptor.value) as Any,
+    ]
+  }
+
+  private func descriptorValuePayload(_ value: Any?) -> [UInt8]? {
+    guard let data = value as? Data else {
+      return nil
+    }
+    return Array(data)
   }
 
   private func characteristicAddress(

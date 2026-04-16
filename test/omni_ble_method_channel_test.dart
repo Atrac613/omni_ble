@@ -42,7 +42,13 @@ void main() {
                       'uuid': '00002a37-0000-1000-8000-00805f9b34fb',
                       'properties': ['read', 'notify'],
                       'permissions': [],
-                      'descriptors': [],
+                      'descriptors': [
+                        {
+                          'uuid': '00002902-0000-1000-8000-00805f9b34fb',
+                          'permissions': [],
+                          'initialValue': [1, 0],
+                        },
+                      ],
                     },
                   ],
                 },
@@ -120,6 +126,14 @@ void main() {
     expect(
       services.single.characteristics.single.properties,
       containsAll({OmniBleGattProperty.read, OmniBleGattProperty.notify}),
+    );
+    expect(
+      services.single.characteristics.single.descriptors.single.uuid,
+      '00002902-0000-1000-8000-00805f9b34fb',
+    );
+    expect(
+      services.single.characteristics.single.descriptors.single.initialValue,
+      Uint8List.fromList([1, 0]),
     );
   });
 
