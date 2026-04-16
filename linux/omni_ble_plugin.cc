@@ -1787,6 +1787,8 @@ FlMethodResponse* get_capabilities() {
   g_autoptr(FlValue) features = fl_value_new_list();
   fl_value_append_take(features, fl_value_new_string("central"));
   fl_value_append_take(features, fl_value_new_string("scanning"));
+  fl_value_append_take(features, fl_value_new_string("gattClient"));
+  fl_value_append_take(features, fl_value_new_string("notifications"));
 
   g_autoptr(FlValue) metadata = fl_value_new_map();
   fl_value_set_string_take(metadata, "adapterState",

@@ -363,6 +363,8 @@ flutter::EncodableMap OmniBlePlugin::CapabilitiesPayload() const {
   flutter::EncodableList features;
   features.emplace_back("central");
   features.emplace_back("scanning");
+  features.emplace_back("gattClient");
+  features.emplace_back("notifications");
 
   flutter::EncodableMap metadata;
   metadata[flutter::EncodableValue("adapterState")] =

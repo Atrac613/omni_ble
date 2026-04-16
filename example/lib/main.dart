@@ -37,9 +37,10 @@ class _OmniBleHomePageState extends State<OmniBleHomePage> {
   OmniBlePermissionStatus _permissionStatus = const OmniBlePermissionStatus();
   Map<OmniBlePermission, bool> _permissionRationales = const {};
   Map<String, int> _connectedRssi = const {};
+  Map<String, String> _serviceSummaries = const {};
   bool _isScanning = false;
   String? _lastScanError;
-  String? _rssiLoadingDeviceId;
+  String? _centralActionDeviceId;
   List<OmniBleScanResult> _scanResults = const [];
 
   @override
@@ -230,6 +231,19 @@ class _OmniBleHomePageState extends State<OmniBleHomePage> {
     ).showSnackBar(SnackBar(content: Text('${error.code}: ${error.message}')));
   }
 
+  bool _supportsConnectedRssi(OmniBleCapabilities capabilities) {
+    return switch (capabilities.platform) {
+      'android' || 'ios' || 'macos' => true,
+      _ => false,
+    };
+  }
+
+  String _centralActionLabel(OmniBleCapabilities capabilities) {
+    return _supportsConnectedRssi(capabilities)
+        ? 'Connect, inspect, and read RSSI'
+        : 'Connect and inspect GATT';
+  }
+
   Future<void> _toggleScan(OmniBleCapabilities capabilities) async {
     if (!capabilities.supports(OmniBleFeature.scanning)) {
       return;
@@ -283,7 +297,7 @@ class _OmniBleHomePageState extends State<OmniBleHomePage> {
     }
   }
 
-  Future<void> _readConnectedRssi(
+  Future<void> _runCentralSmoke(
     OmniBleCapabilities capabilities,
     OmniBleScanResult result,
   ) async {
@@ -310,10 +324,11 @@ class _OmniBleHomePageState extends State<OmniBleHomePage> {
 
     try {
       setState(() {
-        _rssiLoadingDeviceId = result.deviceId;
+        _centralActionDeviceId = result.deviceId;
       });
 
       int? negotiatedMtu;
+      int? rssi;
       await _ble.central.connect(
         result.deviceId,
         config: const OmniBleConnectionConfig(timeout: Duration(seconds: 10)),
@@ -337,20 +352,47 @@ class _OmniBleHomePageState extends State<OmniBleHomePage> {
           // PHY tuning is best-effort for the demo flow.
         }
       }
-      final rssi = await _ble.central.readRssi(result.deviceId);
+      final services = await _ble.central.discoverServices(result.deviceId);
+      final characteristicCount = services.fold<int>(
+        0,
+        (sum, service) => sum + service.characteristics.length,
+      );
+      final descriptorCount = services.fold<int>(
+        0,
+        (sum, service) =>
+            sum +
+            service.characteristics.fold<int>(
+              0,
+              (value, characteristic) =>
+                  value + characteristic.descriptors.length,
+            ),
+      );
+      if (_supportsConnectedRssi(capabilities)) {
+        rssi = await _ble.central.readRssi(result.deviceId);
+      }
 
       if (!mounted) {
         return;
       }
 
       setState(() {
-        _connectedRssi = {..._connectedRssi, result.deviceId: rssi};
+        if (rssi != null) {
+          _connectedRssi = {..._connectedRssi, result.deviceId: rssi};
+        }
+        _serviceSummaries = {
+          ..._serviceSummaries,
+          result.deviceId:
+              '${services.length} services, $characteristicCount characteristics, $descriptorCount descriptors',
+        };
       });
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
-            'Connected RSSI for ${result.name ?? result.deviceId}: $rssi dBm'
-            '${negotiatedMtu == null ? '' : ' (MTU $negotiatedMtu)'}',
+            '${result.name ?? result.deviceId}: '
+            '${services.length} services, $characteristicCount characteristics'
+            '${descriptorCount == 0 ? '' : ', $descriptorCount descriptors'}'
+            '${rssi == null ? '' : ' • RSSI $rssi dBm'}'
+            '${negotiatedMtu == null ? '' : ' • MTU $negotiatedMtu'}',
           ),
         ),
       );
@@ -364,7 +406,7 @@ class _OmniBleHomePageState extends State<OmniBleHomePage> {
       }
       if (mounted) {
         setState(() {
-          _rssiLoadingDeviceId = null;
+          _centralActionDeviceId = null;
         });
       }
     }
@@ -406,7 +448,10 @@ class _OmniBleHomePageState extends State<OmniBleHomePage> {
                 capabilities.supports(OmniBleFeature.gattClient)
                     ? capabilities.platform == 'android'
                           ? 'Central and peripheral BLE operations are implemented on Android too. Runtime Bluetooth permission still has to be granted, and this example can request it through the plugin API.'
-                          : 'Central and peripheral BLE operations, including connected RSSI reads, are currently implemented on Apple platforms and Android. Other targets still expose the scaffold only.'
+                          : capabilities.platform == 'windows' ||
+                                capabilities.platform == 'linux'
+                          ? 'Desktop central GATT client support is now available for scan, connect, discovery, read/write, and notifications. Peripheral/server work is still more limited on desktop, and connected RSSI is not exposed there yet.'
+                          : 'Central and peripheral BLE operations, including connected RSSI reads, are currently implemented on Apple platforms and Android.'
                     : capabilities.supports(OmniBleFeature.scanning)
                     ? 'Central scanning is implemented, but the rest of the GATT client surface is still being filled in for this target.'
                     : 'This target currently exposes the scaffold only. Native BLE backends still need to be implemented.',
@@ -557,11 +602,18 @@ class _OmniBleHomePageState extends State<OmniBleHomePage> {
                                     ),
                                     const SizedBox(height: 8),
                                     Text(
-                                      _connectedRssi.containsKey(
-                                            result.deviceId,
-                                          )
+                                      _serviceSummaries[result.deviceId] ??
+                                          'Services not inspected yet.',
+                                    ),
+                                    const SizedBox(height: 8),
+                                    Text(
+                                      _supportsConnectedRssi(capabilities)
+                                          ? _connectedRssi.containsKey(
+                                                result.deviceId,
+                                              )
                                           ? 'Connected RSSI ${_connectedRssi[result.deviceId]} dBm'
-                                          : 'Connected RSSI not read yet.',
+                                          : 'Connected RSSI not read yet.'
+                                          : 'Connected RSSI is not exposed on this platform.',
                                     ),
                                     const SizedBox(height: 8),
                                     FilledButton.tonal(
@@ -569,16 +621,16 @@ class _OmniBleHomePageState extends State<OmniBleHomePage> {
                                           capabilities.supports(
                                                 OmniBleFeature.gattClient,
                                               ) &&
-                                              _rssiLoadingDeviceId == null
-                                          ? () => _readConnectedRssi(
+                                              _centralActionDeviceId == null
+                                          ? () => _runCentralSmoke(
                                               capabilities,
                                               result,
                                             )
                                           : null,
                                       child: Text(
-                                        _rssiLoadingDeviceId == result.deviceId
-                                            ? 'Reading RSSI...'
-                                            : 'Connect and read RSSI',
+                                        _centralActionDeviceId == result.deviceId
+                                            ? 'Running central smoke...'
+                                            : _centralActionLabel(capabilities),
                                       ),
                                     ),
                                   ],
@@ -590,7 +642,7 @@ class _OmniBleHomePageState extends State<OmniBleHomePage> {
               ),
               const SizedBox(height: 24),
               Text(
-                'Planned surface area',
+                'Device-lab checklist',
                 style: Theme.of(context).textTheme.titleMedium,
               ),
               const SizedBox(height: 8),
@@ -598,9 +650,10 @@ class _OmniBleHomePageState extends State<OmniBleHomePage> {
                 child: Padding(
                   padding: EdgeInsets.all(16),
                   child: Text(
-                    'Permissions: check/request BLE runtime permissions\n'
-                    'Central: startScan, scan error events, connect, readRssi, discoverServices, read/write, setNotification, characteristic events\n'
-                    'Peripheral: publishGattDatabase, startAdvertising, notifyCharacteristicValue, request/subscription events, respondToReadRequest/respondToWriteRequest',
+                    'Central smoke: startScan -> connect -> discoverServices\n'
+                    'Mobile smoke: readRssi after connect, then disconnect\n'
+                    'GATT smoke: read/write known characteristics and descriptors, then enable notifications\n'
+                    'Peripheral smoke: publishGattDatabase -> startAdvertising -> handle read/write requests -> notifyCharacteristicValue',
                   ),
                 ),
               ),

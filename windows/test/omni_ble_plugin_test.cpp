@@ -37,9 +37,11 @@ TEST(OmniBlePlugin, GetPlatformVersion) {
             "windows");
   const auto& features =
       std::get<flutter::EncodableList>(result_map[EncodableValue("availableFeatures")]);
-  EXPECT_EQ(features.size(), 2U);
+  EXPECT_EQ(features.size(), 4U);
   EXPECT_EQ(std::get<std::string>(features[0]), "central");
   EXPECT_EQ(std::get<std::string>(features[1]), "scanning");
+  EXPECT_EQ(std::get<std::string>(features[2]), "gattClient");
+  EXPECT_EQ(std::get<std::string>(features[3]), "notifications");
 }
 
 TEST(OmniBlePlugin, ConnectRequiresDeviceId) {
