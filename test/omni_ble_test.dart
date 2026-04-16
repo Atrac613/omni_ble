@@ -246,6 +246,18 @@ void main() {
     expect(event.value, Uint8List.fromList([1, 2, 3]));
   });
 
+  test('OmniBleEvent parses notification queue readiness', () {
+    final event = OmniBleEvent.fromMap({
+      'type': 'notificationQueueReady',
+      'deviceId': 'device-1',
+      'status': 0,
+    });
+
+    expect(event, isA<OmniBleNotificationQueueReadyEvent>());
+    expect((event as OmniBleNotificationQueueReadyEvent).deviceId, 'device-1');
+    expect(event.status, 0);
+  });
+
   test('OmniBleEvent parses scan errors', () {
     final event = OmniBleEvent.fromMap({
       'type': 'scanError',

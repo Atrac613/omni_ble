@@ -546,6 +546,16 @@ class OmniBlePlugin :
           removeDeviceFromSubscriptions(device)
         }
       }
+
+      override fun onNotificationSent(device: BluetoothDevice, status: Int) {
+        emitEvent(
+          mapOf(
+            "type" to "notificationQueueReady",
+            "deviceId" to normalizeDeviceId(device.address),
+            "status" to status,
+          ),
+        )
+      }
     }
 
   private val advertiseCallback =
@@ -1774,9 +1784,10 @@ class OmniBlePlugin :
     try {
       advertiser.startAdvertising(
         AdvertiseSettings.Builder()
-          .setAdvertiseMode(AdvertiseSettings.ADVERTISE_MODE_LOW_LATENCY)
+          .setAdvertiseMode(advertiseModeFromPayload(payload))
           .setConnectable(payload?.get("connectable") as? Boolean ?: true)
-          .setTxPowerLevel(AdvertiseSettings.ADVERTISE_TX_POWER_HIGH)
+          .setTxPowerLevel(advertiseTxPowerLevelFromPayload(payload))
+          .setTimeout((payload?.get("timeoutMs") as? Number)?.toInt()?.coerceIn(0, 180_000) ?: 0)
           .build(),
         advertiseData,
         scanResponse,
@@ -2208,7 +2219,7 @@ class OmniBlePlugin :
 
   private fun buildAdvertiseData(payload: Map<*, *>?): AdvertiseData {
     val builder = AdvertiseData.Builder()
-      .setIncludeTxPowerLevel(false)
+      .setIncludeTxPowerLevel(payload?.get("includeTxPowerLevel") as? Boolean ?: false)
 
     val serviceUuids =
       (payload?.get("serviceUuids") as? List<*>)?.mapNotNull { uuid ->
@@ -2245,6 +2256,23 @@ class OmniBlePlugin :
       builder.setIncludeDeviceName(false)
     }
     return builder.build()
+  }
+
+  private fun advertiseModeFromPayload(payload: Map<*, *>?): Int {
+    return when (payload?.get("androidMode") as? String) {
+      "lowPower" -> AdvertiseSettings.ADVERTISE_MODE_LOW_POWER
+      "balanced" -> AdvertiseSettings.ADVERTISE_MODE_BALANCED
+      else -> AdvertiseSettings.ADVERTISE_MODE_LOW_LATENCY
+    }
+  }
+
+  private fun advertiseTxPowerLevelFromPayload(payload: Map<*, *>?): Int {
+    return when (payload?.get("androidTxPowerLevel") as? String) {
+      "ultraLow" -> AdvertiseSettings.ADVERTISE_TX_POWER_ULTRA_LOW
+      "low" -> AdvertiseSettings.ADVERTISE_TX_POWER_LOW
+      "medium" -> AdvertiseSettings.ADVERTISE_TX_POWER_MEDIUM
+      else -> AdvertiseSettings.ADVERTISE_TX_POWER_HIGH
+    }
   }
 
   @SuppressLint("MissingPermission")

@@ -234,12 +234,20 @@ void main() {
         localName: 'omni_ble',
         serviceUuids: const ['180D'],
         manufacturerData: Uint8List.fromList([0x34, 0x12, 0x01]),
+        includeTxPowerLevel: true,
+        androidMode: OmniBleAdvertisingMode.balanced,
+        androidTxPowerLevel: OmniBleAdvertisingTxPower.medium,
+        timeout: const Duration(seconds: 30),
       ),
     );
 
     expect(lastCall?.method, 'startAdvertising');
     expect(lastCall?.arguments['localName'], 'omni_ble');
     expect(lastCall?.arguments['serviceUuids'], ['180D']);
+    expect(lastCall?.arguments['includeTxPowerLevel'], isTrue);
+    expect(lastCall?.arguments['androidMode'], 'balanced');
+    expect(lastCall?.arguments['androidTxPowerLevel'], 'medium');
+    expect(lastCall?.arguments['timeoutMs'], 30000);
     expect(
       lastCall?.arguments['manufacturerData'],
       Uint8List.fromList([0x34, 0x12, 0x01]),

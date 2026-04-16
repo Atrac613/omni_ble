@@ -680,6 +680,12 @@ public class OmniBlePlugin: NSObject, FlutterPlugin, FlutterStreamHandler, CBCen
     ])
   }
 
+  public func peripheralManagerIsReady(toUpdateSubscribers peripheral: CBPeripheralManager) {
+    eventSink?([
+      "type": "notificationQueueReady",
+    ])
+  }
+
   private func capabilitiesPayload() -> [String: Any] {
     return [
       "platform": "macos",

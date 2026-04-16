@@ -51,6 +51,27 @@ extension OmniBleWriteTypeValue on OmniBleWriteType {
   };
 }
 
+enum OmniBleAdvertisingMode { balanced, lowLatency, lowPower }
+
+extension OmniBleAdvertisingModeValue on OmniBleAdvertisingMode {
+  String get value => switch (this) {
+    OmniBleAdvertisingMode.balanced => 'balanced',
+    OmniBleAdvertisingMode.lowLatency => 'lowLatency',
+    OmniBleAdvertisingMode.lowPower => 'lowPower',
+  };
+}
+
+enum OmniBleAdvertisingTxPower { ultraLow, low, medium, high }
+
+extension OmniBleAdvertisingTxPowerValue on OmniBleAdvertisingTxPower {
+  String get value => switch (this) {
+    OmniBleAdvertisingTxPower.ultraLow => 'ultraLow',
+    OmniBleAdvertisingTxPower.low => 'low',
+    OmniBleAdvertisingTxPower.medium => 'medium',
+    OmniBleAdvertisingTxPower.high => 'high',
+  };
+}
+
 enum OmniBleGattProperty { read, write, writeWithoutResponse, notify, indicate }
 
 extension OmniBleGattPropertyValue on OmniBleGattProperty {
@@ -421,6 +442,10 @@ class OmniBleAdvertisement {
     this.serviceData = const {},
     this.manufacturerData,
     this.connectable = true,
+    this.includeTxPowerLevel = false,
+    this.androidMode = OmniBleAdvertisingMode.lowLatency,
+    this.androidTxPowerLevel = OmniBleAdvertisingTxPower.high,
+    this.timeout,
   });
 
   final String? localName;
@@ -428,6 +453,10 @@ class OmniBleAdvertisement {
   final Map<String, Uint8List> serviceData;
   final Uint8List? manufacturerData;
   final bool connectable;
+  final bool includeTxPowerLevel;
+  final OmniBleAdvertisingMode androidMode;
+  final OmniBleAdvertisingTxPower androidTxPowerLevel;
+  final Duration? timeout;
 
   Map<String, Object?> toMap() {
     return {
@@ -438,6 +467,10 @@ class OmniBleAdvertisement {
       ),
       'manufacturerData': manufacturerData?.toList(growable: false),
       'connectable': connectable,
+      'includeTxPowerLevel': includeTxPowerLevel,
+      'androidMode': androidMode.value,
+      'androidTxPowerLevel': androidTxPowerLevel.value,
+      'timeoutMs': timeout?.inMilliseconds,
     };
   }
 }
@@ -478,6 +511,11 @@ sealed class OmniBleEvent {
             characteristicUuid: (map['characteristicUuid'] ?? '').toString(),
           ),
           value: _bytesOrNull(map['value']) ?? Uint8List(0),
+        );
+      case OmniBleNotificationQueueReadyEvent.typeValue:
+        return OmniBleNotificationQueueReadyEvent(
+          deviceId: map['deviceId']?.toString(),
+          status: _intOrNull(map['status']),
         );
       case OmniBleReadRequestEvent.typeValue:
         return OmniBleReadRequestEvent(
@@ -558,6 +596,16 @@ final class OmniBleCharacteristicValueChanged extends OmniBleEvent {
 
   final OmniBleCharacteristicAddress address;
   final Uint8List value;
+}
+
+final class OmniBleNotificationQueueReadyEvent extends OmniBleEvent {
+  const OmniBleNotificationQueueReadyEvent({this.deviceId, this.status})
+    : super(typeValue);
+
+  static const typeValue = 'notificationQueueReady';
+
+  final String? deviceId;
+  final int? status;
 }
 
 final class OmniBleReadRequestEvent extends OmniBleEvent {
