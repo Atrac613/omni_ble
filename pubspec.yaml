@@ -43,7 +43,7 @@ flutter:
   plugin:
     platforms:
       android:
-        package: dev.noguwo.omni_ble
+        package: dev.atrac613.omni_ble
         pluginClass: OmniBlePlugin
       ios:
         pluginClass: OmniBlePlugin

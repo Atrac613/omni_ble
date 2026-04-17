@@ -8,7 +8,7 @@
 PRODUCT_NAME = omni_ble_example
 
 // The application's bundle identifier
-PRODUCT_BUNDLE_IDENTIFIER = dev.noguwo.omniBleExample
+PRODUCT_BUNDLE_IDENTIFIER = dev.atrac613.omniBleExample
 
 // The copyright displayed in application information
-PRODUCT_COPYRIGHT = Copyright © 2026 dev.noguwo. All rights reserved.
+PRODUCT_COPYRIGHT = Copyright © 2026 dev.atrac613. All rights reserved.

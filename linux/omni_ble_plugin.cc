@@ -28,8 +28,8 @@ constexpr char kGattDescriptorInterface[] = "org.bluez.GattDescriptor1";
 constexpr char kAdvertisingManagerInterface[] = "org.bluez.LEAdvertisingManager1";
 constexpr char kAdvertisementInterface[] = "org.bluez.LEAdvertisement1";
 constexpr char kObjectManagerInterface[] = "org.freedesktop.DBus.ObjectManager";
-constexpr char kApplicationPath[] = "/dev/noguwo/omni_ble";
-constexpr char kAdvertisementPath[] = "/dev/noguwo/omni_ble/advertisement0";
+constexpr char kApplicationPath[] = "/dev/atrac613/omni_ble";
+constexpr char kAdvertisementPath[] = "/dev/atrac613/omni_ble/advertisement0";
 
 std::string normalize_uuid(const gchar* value) {
   if (value == nullptr) {

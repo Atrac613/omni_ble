@@ -1,5 +1,5 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
-  package="dev.noguwo.omni_ble">
+  package="dev.atrac613.omni_ble">
   <uses-feature
     android:name="android.hardware.bluetooth_le"
     android:required="false" />

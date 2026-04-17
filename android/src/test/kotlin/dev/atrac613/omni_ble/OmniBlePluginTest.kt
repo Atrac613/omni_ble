@@ -1,4 +1,4 @@
-package dev.noguwo.omni_ble
+package dev.atrac613.omni_ble
 
 import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel

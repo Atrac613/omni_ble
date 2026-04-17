@@ -1,4 +1,4 @@
-group = "dev.noguwo.omni_ble"
+group = "dev.atrac613.omni_ble"
 version = "1.0-SNAPSHOT"
 
 buildscript {
@@ -27,7 +27,7 @@ plugins {
 }
 
 android {
-    namespace = "dev.noguwo.omni_ble"
+    namespace = "dev.atrac613.omni_ble"
 
     compileSdk = 36
 
