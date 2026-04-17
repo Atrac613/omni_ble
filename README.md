@@ -1,5 +1,6 @@
 # omni_ble
 
+[![CI](https://github.com/Atrac613/omni_ble/actions/workflows/ci.yml/badge.svg)](https://github.com/Atrac613/omni_ble/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 `omni_ble` is a Flutter Bluetooth Low Energy plugin with a Dart-first API for
