@@ -4,14 +4,15 @@
 #
 Pod::Spec.new do |s|
   s.name             = 'omni_ble'
-  s.version          = '0.0.1'
-  s.summary          = 'A new Flutter plugin project.'
+  s.version          = '0.1.0'
+  s.summary          = 'Flutter Bluetooth LE plugin for central and peripheral roles.'
   s.description      = <<-DESC
-A new Flutter plugin project.
+Flutter Bluetooth Low Energy plugin with a Dart-first API for central and
+peripheral roles across iOS, macOS, Android, Windows, and Linux.
                        DESC
-  s.homepage         = 'http://example.com'
+  s.homepage         = 'https://github.com/Atrac613/omni_ble'
   s.license          = { :file => '../LICENSE' }
-  s.author           = { 'Your Company' => 'email@example.com' }
+  s.author           = { 'Osamu Noguchi' => 'atrac613@gmail.com' }
   s.source           = { :path => '.' }
   s.source_files = 'Classes/**/*'
   s.dependency 'Flutter'

@@ -29,7 +29,7 @@ platform and BLE feature set.
 ## Device-Lab Workflow
 
 1. Use the root-level
-   [device-lab runbook](../docs/device_lab_runbook.md) for the scenario order
+   [device-lab runbook](../doc/device_lab_runbook.md) for the scenario order
    and pass criteria.
 2. Use `Start scan` and the central smoke button when this host is acting as a
    BLE central.
@@ -37,5 +37,5 @@ platform and BLE feature set.
    acting as a desktop peripheral.
 4. After the run, use `Copy session report` to capture the local operator log.
 5. Update the root-level
-   [validated support matrix](../docs/validated_support_matrix.md) with the
+   [validated support matrix](../doc/validated_support_matrix.md) with the
    result.

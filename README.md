@@ -1,32 +1,81 @@
 # omni_ble
 
-A cross-platform Flutter plugin scaffold for Bluetooth LE central and peripheral roles.
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-`omni_ble` is set up to grow into a single Dart-first API that targets iOS, macOS, Android, Windows, and Linux.
+`omni_ble` is a Flutter Bluetooth Low Energy plugin with a Dart-first API for
+central and peripheral roles across iOS, macOS, Android, Windows, and Linux.
 
-The current state is an early but usable cross-platform BLE foundation:
+It focuses on giving Flutter apps one shared BLE surface while still exposing
+the platform-specific realities that matter in production, such as Android
+runtime permissions, desktop capability differences, and device-lab validation.
 
-- Dart-side public API is defined for both central and peripheral workflows.
-- Platform channels are wired on every target.
-- iOS and macOS now implement adapter-state events, central scanning, connection state events, RSSI reads, service discovery, characteristic/descriptor read-write, notification subscriptions, and a first peripheral backend.
-- Android now implements the same central-side surface plus a first peripheral backend, including MTU / connection priority / PHY tuning helpers, and the Dart API can now check/request the runtime Bluetooth permissions those flows need alongside rationale/settings helpers.
-- Linux and Windows now expose desktop central GATT client flows plus a first peripheral/server backend. The desktop permission API continues to return `notRequired`.
+## Status
 
-Implemented support and validated-on-hardware support are tracked separately.
-Use [docs/device_lab_runbook.md](docs/device_lab_runbook.md) for the operator
-workflow and [docs/validated_support_matrix.md](docs/validated_support_matrix.md)
-for release-facing validation status.
+This repository is public and usable today as an early cross-platform BLE
+package.
 
-## API shape
+What it is:
+
+- A single Dart-first API for central and peripheral BLE workflows
+- Implemented native backends for Apple, Android, Windows, and Linux
+- An example app that doubles as a smoke tool and device-lab operator console
+
+What it is not:
+
+- A Web Bluetooth package
+- A classic Bluetooth package
+- Fully hardware-validated across every host and peer combination yet
+
+Implemented backend coverage and validated-on-hardware support are tracked
+separately. Use [doc/device_lab_runbook.md](doc/device_lab_runbook.md) for
+the operator workflow and
+[doc/validated_support_matrix.md](doc/validated_support_matrix.md) for
+release-facing validation status.
+
+## Highlights
+
+- Central scanning, connection management, service discovery, characteristic and
+  descriptor IO, and notifications across all five native targets
+- Peripheral GATT database publishing, advertising, request handling, and
+  server-side notifications across all five native targets
+- Runtime BLE permission helpers with Android-native request, rationale, and
+  settings recovery flows
+- Android connection tuning APIs for MTU, connection priority, and preferred
+  PHY selection
+- A desktop-capable example app for both central smoke flows and peripheral
+  smoke flows
+
+## Getting Started
+
+Add the package from pub.dev:
+
+```bash
+flutter pub add omni_ble
+```
+
+Or depend on the GitHub repository before the next published release:
+
+```yaml
+dependencies:
+  omni_ble:
+    git:
+      url: https://github.com/Atrac613/omni_ble.git
+```
+
+Then import the package:
 
 ```dart
-import 'dart:typed_data';
+import 'package:omni_ble/omni_ble.dart';
+```
 
+## Quick Start
+
+```dart
 import 'package:omni_ble/omni_ble.dart';
 
-const ble = OmniBle();
+final ble = OmniBle();
 
-Future<void> centralFlow() async {
+Future<void> startHeartRateScan() async {
   final capabilities = await ble.getCapabilities();
   if (!capabilities.supports(OmniBleFeature.scanning)) return;
 
@@ -35,83 +84,85 @@ Future<void> centralFlow() async {
   });
   if (!permissionStatus.isGranted(OmniBlePermission.scan)) return;
 
+  ble.events.listen((event) {
+    if (event is OmniBleScanResultEvent) {
+      print('found ${event.deviceId} ${event.name ?? ''} rssi=${event.rssi}');
+    }
+  });
+
   await ble.central.startScan(
     config: const OmniBleScanConfig(serviceUuids: ['180D']),
   );
 }
-
-Future<void> peripheralFlow() async {
-  await ble.peripheral.publishGattDatabase(
-    const OmniBleGattDatabase(
-      services: [
-        OmniBleGattService(
-          uuid: '180D',
-          characteristics: [
-            OmniBleGattCharacteristic(
-              uuid: '2A37',
-              properties: {
-                OmniBleGattProperty.notify,
-              },
-            ),
-          ],
-        ),
-      ],
-    ),
-  );
-
-  await ble.peripheral.startAdvertising(
-    const OmniBleAdvertisement(
-      localName: 'omni_ble',
-      serviceUuids: ['180D'],
-    ),
-  );
-
-  await ble.peripheral.notifyCharacteristicValue(
-    const OmniBleCharacteristicAddress(
-      serviceUuid: '180D',
-      characteristicUuid: '2A37',
-    ),
-    Uint8List.fromList([72]),
-  );
-}
 ```
 
-## Package layout
+The example app covers both central and peripheral flows and is the recommended
+way to smoke-test a host before a device-lab run. See
+[`example/`](example) and [`example/README.md`](example/README.md).
 
-- `lib/omni_ble.dart`: public central/peripheral facade
-- `lib/src/omni_ble_models.dart`: shared BLE models and event types
-- `lib/omni_ble_method_channel.dart`: method-channel bridge and error mapping
-- `android/`, `ios/`, `macos/`, `windows/`, `linux/`: native stubs for the plugin
+## API Overview
 
-## Current coverage
+The main public entry points are:
 
-- `iOS`: `getCapabilities()`, adapter state events, `startScan()`, `stopScan()`, scan result events, `connect()`, `disconnect()`, connection state events, `readRssi()`, `discoverServices()`, `readCharacteristic()`, `readDescriptor()`, `writeCharacteristic()`, `writeDescriptor()`, `setNotification()`, characteristic value change events, `publishGattDatabase()`, `clearGattDatabase()`, `startAdvertising()`, `stopAdvertising()`, `notifyCharacteristicValue()`, `readRequest`/`writeRequest`/`subscriptionChanged`/`notificationQueueReady` events, `respondToReadRequest()`, `respondToWriteRequest()`, `checkPermissions()`, `requestPermissions()` (`notRequired`)
-- `macOS`: `getCapabilities()`, adapter state events, `startScan()`, `stopScan()`, scan result events, `connect()`, `disconnect()`, connection state events, `readRssi()`, `discoverServices()`, `readCharacteristic()`, `readDescriptor()`, `writeCharacteristic()`, `writeDescriptor()`, `setNotification()`, characteristic value change events, `publishGattDatabase()`, `clearGattDatabase()`, `startAdvertising()`, `stopAdvertising()`, `notifyCharacteristicValue()`, `readRequest`/`writeRequest`/`subscriptionChanged`/`notificationQueueReady` events, `respondToReadRequest()`, `respondToWriteRequest()`, `checkPermissions()`, `requestPermissions()` (`notRequired`)
-- `Android`: `getCapabilities()`, adapter state events, `startScan()`, `stopScan()`, scan result events, `scanError` events, `connect()` (timeout / autoConnect config), `disconnect()`, connection state events, `readRssi()`, `requestMtu()`, `requestConnectionPriority()`, `setPreferredPhy()`, `mtuChanged`/`phyUpdated` events, `discoverServices()`, `readCharacteristic()`, `readDescriptor()`, `writeCharacteristic()`, `writeDescriptor()`, `setNotification()`, characteristic value change events, `publishGattDatabase()`, `clearGattDatabase()`, `startAdvertising()` (mode / tx power / timeout options), `stopAdvertising()`, `notifyCharacteristicValue()`, `readRequest`/`writeRequest`/`subscriptionChanged`/`notificationQueueReady` events, `respondToReadRequest()`, `respondToWriteRequest()`, `checkPermissions()`, `requestPermissions()`
-- `Windows`: `getCapabilities()`, adapter state events, `startScan()`, `stopScan()`, scan result events, `scanError` events, `connect()`, `disconnect()`, connection state events, `discoverServices()`, `readCharacteristic()`, `readDescriptor()`, `writeCharacteristic()`, `writeDescriptor()`, `setNotification()`, characteristic value change events, `publishGattDatabase()`, `clearGattDatabase()`, `startAdvertising()`, `stopAdvertising()`, `notifyCharacteristicValue()`, `readRequest`/`writeRequest`/`subscriptionChanged`/`notificationQueueReady` events, `respondToReadRequest()`, `respondToWriteRequest()`, `checkPermissions()`, `requestPermissions()` (`notRequired`)
-- `Linux`: `getCapabilities()`, adapter state events, `startScan()`, `stopScan()`, scan result events, `connect()`, `disconnect()`, connection state events, `discoverServices()`, `readCharacteristic()`, `readDescriptor()`, `writeCharacteristic()`, `writeDescriptor()`, `setNotification()`, characteristic value change events, `publishGattDatabase()`, `clearGattDatabase()`, `startAdvertising()`, `stopAdvertising()`, `notifyCharacteristicValue()`, `readRequest`/`writeRequest`/`subscriptionChanged`/`notificationQueueReady` events, `respondToReadRequest()`, `respondToWriteRequest()`, `checkPermissions()`, `requestPermissions()` (`notRequired`)
+- `OmniBle`: top-level facade for capabilities, events, and role-specific APIs
+- `OmniBleCentral`: central role scanning, connection, discovery, IO, and
+  notification control
+- `OmniBlePeripheral`: GATT database publishing, advertising, server-side
+  notifications, and request responses
+- `OmniBlePermissions`: runtime permission checks, requests, rationale, and
+  settings recovery helpers
+- `OmniBleEvent`: shared stream for adapter, scan, connection, value-change,
+  request, and platform-specific update events
 
-Peripheral request events now include the request offset on Apple and Android, Android write requests also include `preparedWrite` / `responseNeeded` metadata when the platform provides it, and Apple / Android now surface `notificationQueueReady` to help pace server-side notifications.
+## Platform Coverage
 
-Android central connections now accept `OmniBleConnectionConfig(timeout: ..., androidAutoConnect: ...)` and expose `requestMtu()`, `requestConnectionPriority()`, and `setPreferredPhy()` to tune a live connection. Apple targets return `unsupported` for the Android-only tuning APIs that CoreBluetooth does not expose.
+Implemented backend coverage:
 
-Windows and Linux now advertise `peripheral` / `advertising` / `gattServer` alongside `gattClient` / `notifications`, which lets the example app run both the desktop central smoke flow and a first desktop peripheral smoke flow. `readRssi()` remains unavailable on those desktop targets for now, and BlueZ notifications are broadcast to current subscribers rather than targeted per device.
+| Area | iOS | macOS | Android | Windows | Linux |
+| --- | --- | --- | --- | --- | --- |
+| Central scan/connect/discover/read/write/notify | yes | yes | yes | yes | yes |
+| Peripheral GATT server and advertising | yes | yes | yes | yes | yes |
+| Runtime BLE permission request flow | system-managed | system-managed | yes | not required | not required |
 
-## Android permissions
+Platform notes:
 
-- The plugin manifest declares BLE scan/connect/advertise permissions.
-- `ble.permissions.check({...})` reports whether runtime BLE permissions are already available.
-- `ble.permissions.request({...})` triggers the Android permission prompt when an activity is attached.
-- `ble.permissions.shouldShowRequestRationale({...})` reports whether Android recommends showing an in-app rationale before re-requesting a denied permission.
-- `ble.permissions.openAppSettings()` and `ble.permissions.openBluetoothSettings()` provide recovery shortcuts when the app needs to guide the user back into system settings.
-- Android 12+ still requires runtime approval for `BLUETOOTH_SCAN`, `BLUETOOTH_CONNECT`, and `BLUETOOTH_ADVERTISE`.
-- Android 11 and below still requires runtime approval for location before scanning.
-- Android scan failures are also surfaced through the shared event stream as `OmniBleScanErrorEvent`.
-- On non-Android targets, the permission API returns `notRequired` for the requested BLE permissions, `shouldShowRequestRationale()` returns `false`, and the settings helpers return `false`.
+- `readRssi()` is currently implemented on iOS, macOS, and Android.
+- `requestMtu()`, `requestConnectionPriority()`, and `setPreferredPhy()` are
+  Android-only and return `unsupported` on Apple platforms.
+- Desktop permission helpers currently return `notRequired`.
+- Linux currently broadcasts server notifications to current BlueZ subscribers
+  instead of targeting a specific peer device.
+- Implemented support does not automatically mean validated-on-hardware
+  support. Track release-facing validation in
+  [doc/validated_support_matrix.md](doc/validated_support_matrix.md).
 
-## Device-lab matrix
+## Android Permissions
 
-Use the example app as the operator console and verify these scenarios on real hardware:
+- The plugin manifest declares BLE scan, connect, and advertise permissions.
+- `ble.permissions.check({...})` reports whether runtime BLE permissions are
+  already available.
+- `ble.permissions.request({...})` triggers the Android permission prompt when
+  an activity is attached.
+- `ble.permissions.shouldShowRequestRationale({...})` reports whether Android
+  recommends showing an in-app rationale before re-requesting a denied
+  permission.
+- `ble.permissions.openAppSettings()` and
+  `ble.permissions.openBluetoothSettings()` provide recovery shortcuts when the
+  app needs to guide the user back into system settings.
+- Android 12+ still requires runtime approval for `BLUETOOTH_SCAN`,
+  `BLUETOOTH_CONNECT`, and `BLUETOOTH_ADVERTISE`.
+- Android 11 and below still requires location permission before scanning.
+- Android scan failures are also surfaced through the shared event stream as
+  `OmniBleScanErrorEvent`.
+
+On non-Android targets, the permission API returns `notRequired` for the
+requested BLE permissions, `shouldShowRequestRationale()` returns `false`, and
+the settings helpers return `false`.
+
+## Validation Workflow
+
+Use the example app as the operator console and verify these scenarios on real
+hardware:
 
 | Host | Peer | Scenarios |
 | --- | --- | --- |
@@ -123,24 +174,44 @@ Use the example app as the operator console and verify these scenarios on real h
 
 Pass criteria:
 
-- `startScan()` finds at least one known target and reports stable RSSI / advertisement metadata.
-- `connect()` emits `connecting` then `connected`, and `disconnect()` tears down cleanly.
-- `discoverServices()` returns a non-empty service tree for a known GATT device.
-- `readCharacteristic()` / `writeCharacteristic()` and descriptor reads/writes succeed on a known test service.
-- `setNotification()` causes at least one `characteristicValueChanged` event on the subscribed characteristic.
-- Peripheral scenarios verify advertising start/stop, request events, responses, and server-side notifications on every backend, with the Linux caveat that subscription events are device-agnostic at the BlueZ layer.
+- `startScan()` finds at least one known target and reports stable RSSI or
+  advertisement metadata.
+- `connect()` emits `connecting` then `connected`, and `disconnect()` tears
+  down cleanly.
+- `discoverServices()` returns a non-empty service tree for a known GATT
+  device.
+- Characteristic and descriptor reads and writes succeed on a known test
+  service.
+- `setNotification()` causes at least one `characteristicValueChanged` event on
+  the subscribed characteristic.
+- Peripheral scenarios verify advertising start and stop, request events,
+  responses, and server-side notifications on every backend.
 
 Operator workflow:
 
-1. Follow [docs/device_lab_runbook.md](docs/device_lab_runbook.md) to execute the
-   scenario.
+1. Follow [doc/device_lab_runbook.md](doc/device_lab_runbook.md) to execute
+   the scenario.
 2. Copy the session report from the example app on both hosts after the run.
-3. Update [docs/validated_support_matrix.md](docs/validated_support_matrix.md)
+3. Update [doc/validated_support_matrix.md](doc/validated_support_matrix.md)
    with the outcome and date.
 
-## Recommended next steps
+## Development
 
-1. Run the Priority 1 scenarios from [docs/validated_support_matrix.md](docs/validated_support_matrix.md) on real hardware.
-2. Fix any interoperability blockers found during those runs.
-3. Promote each scenario from `ready-for-lab` to `validated` only after the result is recorded in the matrix.
-4. Document any newly confirmed hardware caveats here once they have been reproduced in the lab.
+Run the standard verification set:
+
+```bash
+flutter analyze
+flutter test
+cd example && flutter test
+cd example && flutter test integration_test -d macos -r compact
+cd example && flutter build apk --debug
+cd example && flutter build macos
+dart pub publish --dry-run
+```
+
+For release-specific steps, see
+[doc/release_checklist.md](doc/release_checklist.md).
+
+## License
+
+This project is licensed under the MIT license. See [LICENSE](LICENSE).
