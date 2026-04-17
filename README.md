@@ -120,13 +120,37 @@ The main public entry points are:
 
 ## Platform Coverage
 
-Implemented backend coverage:
+These tables describe implemented backend coverage, not full
+validated-on-hardware coverage.
 
-| Area | iOS | macOS | Android | Windows | Linux |
+### Central
+
+| Feature | iOS | macOS | Android | Windows | Linux |
 | --- | --- | --- | --- | --- | --- |
-| Central scan/connect/discover/read/write/notify | yes | yes | yes | yes | yes |
-| Peripheral GATT server and advertising | yes | yes | yes | yes | yes |
-| Runtime BLE permission request flow | system-managed | system-managed | yes | not required | not required |
+| Adapter state events | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Scan start/stop and scan results | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Scan error events | ❌ | ❌ | ✅ | ✅ | ❌ |
+| Connect/disconnect and connection state | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Service discovery | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Characteristic read/write | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Descriptor read/write | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Notifications and value change events | ✅ | ✅ | ✅ | ✅ | ✅ |
+| RSSI reads | ✅ | ✅ | ✅ | ❌ | ❌ |
+| MTU / connection priority / PHY tuning | ❌ | ❌ | ✅ | ❌ | ❌ |
+
+### Peripheral
+
+| Feature | iOS | macOS | Android | Windows | Linux |
+| --- | --- | --- | --- | --- | --- |
+| Publish and clear GATT database | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Start and stop advertising | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Advertising mode / TX power / timeout options | ❌ | ❌ | ✅ | ❌ | ❌ |
+| Read and write request events | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Subscription change events | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Notification queue ready events | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Read and write request responses | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Server-side characteristic notifications | ✅ | ✅ | ✅ | ✅ | ⚠️ |
+| Per-device notification targeting | ✅ | ✅ | ✅ | ✅ | ⚠️ |
 
 Platform notes:
 
@@ -136,6 +160,9 @@ Platform notes:
 - Desktop permission helpers currently return `notRequired`.
 - Linux currently broadcasts server notifications to current BlueZ subscribers
   instead of targeting a specific peer device.
+- `✅` means a native backend exists today, `⚠️` means the API is present with
+  a documented backend caveat, and `❌` means the feature is currently not
+  implemented for that platform.
 - Implemented support does not automatically mean validated-on-hardware
   support. Track release-facing validation in
   [doc/validated_support_matrix.md](doc/validated_support_matrix.md).
