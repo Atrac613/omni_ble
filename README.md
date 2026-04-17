@@ -1,6 +1,6 @@
 # omni_ble
 
-[![CI](https://github.com/Atrac613/omni_ble/actions/workflows/ci.yml/badge.svg)](https://github.com/Atrac613/omni_ble/actions/workflows/ci.yml)
+[![CI](https://github.com/Atrac613/omni_ble/actions/workflows/dart.yml/badge.svg)](https://github.com/Atrac613/omni_ble/actions/workflows/dart.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 `omni_ble` is a Flutter Bluetooth Low Energy plugin with a Dart-first API for
@@ -12,8 +12,11 @@ runtime permissions, desktop capability differences, and device-lab validation.
 
 ## Status
 
-This repository is public and usable today as an early cross-platform BLE
-package.
+This repository is public, but it is still not ready for use.
+
+The API surface and native backends are implemented, but hardware validation
+and interoperability coverage are still expanding and release behavior may
+change as those gaps are closed.
 
 What it is:
 
