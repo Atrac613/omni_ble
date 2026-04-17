@@ -1,4 +1,4 @@
-# 0.1.0
+# 0.1.0-dev.1
 
 - Initial public preview release.
 - Added a Dart-first BLE API for central and peripheral roles across iOS,

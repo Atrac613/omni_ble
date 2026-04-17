@@ -35,7 +35,7 @@ host-side build or smoke test on that target before publishing.
 
 1. Ensure `git status` is clean.
 2. Commit the release-prep changes.
-3. Tag the version, for example `v0.1.0`.
+3. Tag the version, for example `v0.1.0-dev.1`.
 4. Push the branch and tag to GitHub.
 5. Create a GitHub release whose title matches the tag and whose notes are
    based on the matching `CHANGELOG.md` section.

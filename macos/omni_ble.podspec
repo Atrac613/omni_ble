@@ -4,7 +4,7 @@
 #
 Pod::Spec.new do |s|
   s.name             = 'omni_ble'
-  s.version          = '0.1.0'
+  s.version          = '0.1.0-dev.1'
   s.summary          = 'Flutter Bluetooth LE plugin for central and peripheral roles.'
   s.description      = <<-DESC
 Flutter Bluetooth Low Energy plugin with a Dart-first API for central and

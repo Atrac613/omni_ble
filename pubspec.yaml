@@ -1,6 +1,6 @@
 name: omni_ble
 description: "Flutter Bluetooth Low Energy plugin with Dart-first central and peripheral APIs for Android, Apple, Windows, and Linux."
-version: 0.1.0
+version: 0.1.0-dev.1
 homepage: https://github.com/Atrac613/omni_ble
 repository: https://github.com/Atrac613/omni_ble
 issue_tracker: https://github.com/Atrac613/omni_ble/issues
